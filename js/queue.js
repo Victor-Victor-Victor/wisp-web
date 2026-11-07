@@ -6,8 +6,8 @@
 export function createQueue(store) {
   let draining = false;
   return {
-    async enqueue({ transcript, requestId }, now = Date.now()) {
-      const item = { id: requestId, transcript, at: now };
+    async enqueue({ transcript, requestId, location = null }, now = Date.now()) {
+      const item = { id: requestId, transcript, location, at: now };
       await store.put(item);
       return item;
     },
@@ -39,14 +39,24 @@ export function createQueue(store) {
   };
 }
 
-/** What to show for a drained item: a saved line, or something that needs the user's attention. */
+/**
+ * What to show for a drained item: "saved" notices and things that need the user's attention.
+ * Handles list replies (applied / held / errors) and plain replies.
+ * @returns {Array<{kind:"saved", text} | {kind:"attention", transcript, text}>}
+ */
 export function describeDrained({ item, result }) {
   const d = result.data ?? {};
-  if (result.kind === 'ok' && d.status === 'ok') return { kind: 'saved', text: `Saved earlier: ${d.reply}` };
-  const why = d.status === 'clarify'
-    ? `WISP needs to ask: ${d.reply}`
-    : d.reply || (result.kind === 'unauthorized' ? "This phone isn't set up." : 'Something went wrong.');
-  return { kind: 'attention', transcript: item.transcript, text: why };
+  const attention = (text) => ({ kind: 'attention', transcript: item.transcript, text });
+  if (result.kind === 'ok' && d.status === 'list') {
+    return [
+      ...(d.applied ?? []).map((a) => ({ kind: 'saved', text: `Saved earlier: ${a.summary ?? a.reply}` })),
+      ...(d.held ?? []).map((h) => attention(`WISP needs to ask: ${h.question}`)),
+      ...(d.errors ?? []).map((e) => attention(e.reply)),
+    ];
+  }
+  if (result.kind === 'ok' && d.status === 'ok') return [{ kind: 'saved', text: `Saved earlier: ${d.reply}` }];
+  if (d.status === 'clarify') return [attention(`WISP needs to ask: ${d.reply}`)];
+  return [attention(d.reply || (result.kind === 'unauthorized' ? "This phone isn't set up." : 'Something went wrong.'))];
 }
 
 export function memoryStore() {

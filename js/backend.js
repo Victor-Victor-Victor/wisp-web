@@ -38,6 +38,8 @@ export function createBackend({ url, getToken, fetchFn, timeoutMs, user = 'phone
 
   return {
     command: (transcript, requestId) => post({ transcript, request_id: requestId }),
+    /** One chunk of a spoken list; `location` is the place carried from earlier chunks (or null). */
+    list: (transcript, location, requestId) => post({ transcript, list: { location: location ?? null }, request_id: requestId }),
     answer: (transcript, pending, clarify, requestId) => post({ transcript, pending, clarify, request_id: requestId }),
     undo: (requestId) => post({ actions: [{ intent: 'undo' }], request_id: requestId }),
     /** Harmless check that the token works (dry-run query: writes nothing). */

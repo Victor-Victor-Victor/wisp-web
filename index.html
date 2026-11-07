@@ -15,9 +15,22 @@
   <header class="top">
     <h1>WISP</h1>
     <span class="ver" id="ver"></span>
+    <button id="gear" class="gear" aria-label="Settings">⚙</button>
   </header>
 
   <main>
+    <section class="card" id="settings" hidden>
+      <h2>Cues</h2>
+      <fieldset class="choices">
+        <legend>Sounds</legend>
+        <label><input type="radio" name="sounds" value="full"> Distinct sounds</label>
+        <label><input type="radio" name="sounds" value="minimal"> Fewer sounds (listening only)</label>
+        <label><input type="radio" name="sounds" value="off"> No sounds (visual only)</label>
+      </fieldset>
+      <label class="toggle"><input type="checkbox" id="set-vibrate"> Vibration</label>
+      <p class="hint">Spoken questions and the wrap-up always speak. Rising tone = listening, click = saved, two low notes = will ask later, low tone = problem, falling tone = mic closed.</p>
+    </section>
+
     <section class="setup card" id="setup" hidden>
       <h2>Set up this phone</h2>
       <p id="setup-msg">On your computer, open the WISP setup code and scan it with this phone's camera.</p>
@@ -36,9 +49,11 @@
         <span class="spinner" aria-hidden="true"></span>
       </button>
       <p id="status" class="status" aria-live="polite"></p>
+      <p id="banner" class="banner" hidden></p>
       <p id="transcript" class="transcript"></p>
       <p id="reply" class="reply" aria-live="polite"></p>
-      <button id="undo" class="undo" hidden>Undo</button>
+      <button id="undo" class="undo" hidden>Undo last</button>
+      <ol id="items" class="items"></ol>
       <ul id="results" class="results" hidden></ul>
     </section>
 
