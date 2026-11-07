@@ -112,3 +112,5 @@ main { max-width: 640px; margin: 0 auto; }
 .choices legend { color: var(--muted); margin-bottom: 6px; }
 .choices label, .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 17px; }
 .choices input, .toggle input { width: 22px; height: 22px; accent-color: var(--teal); }
+.lab h2 { margin: 10px 0 4px; }
+.lab-buttons { display: grid; gap: 8px; }

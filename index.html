@@ -67,6 +67,17 @@
 
     <details class="card diagnostics">
       <summary>Diagnostics</summary>
+      <div class="lab">
+        <h2>Mic lab</h2>
+        <p class="hint">Each test listens for 60 seconds. Nothing is saved. Count the beeps you hear.</p>
+        <div class="lab-buttons">
+          <button class="btn" data-lab="a">A: one long session</button>
+          <button class="btn" data-lab="b">B: long session + "Okay"</button>
+          <button class="btn" data-lab="c">C: phrase by phrase</button>
+          <button class="btn" id="lab-stop" hidden>Stop test</button>
+        </div>
+        <p id="lab-status" class="hint" aria-live="polite"></p>
+      </div>
       <pre id="log" class="log"></pre>
       <button id="copy" class="btn">Copy report</button>
       <p id="copy-status" class="hint"></p>

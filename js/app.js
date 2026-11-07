@@ -8,6 +8,7 @@ import { createSettings } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
+import { createMicLab, LAB_RUNS } from './miclab.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -16,6 +17,7 @@ const ui = {
   attentionList: $('attention-list'), setup: $('setup'), setupMsg: $('setup-msg'), tokenInput: $('token-input'),
   tokenSave: $('token-save'), gear: $('gear'), settings: $('settings'), vibrate: $('set-vibrate'),
   log: $('log'), copy: $('copy'), copyStatus: $('copy-status'),
+  labStop: $('lab-stop'), labStatus: $('lab-status'), labButtons: [...document.querySelectorAll('[data-lab]')],
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -313,6 +315,7 @@ ui.vibrate.addEventListener('change', () => {
 
 // ---------- events ----------
 ui.mic.addEventListener('click', () => {
+  if (lab.running()) return;
   if (!tokenStore.get()) {
     showSetup();
     return;
@@ -321,14 +324,34 @@ ui.mic.addEventListener('click', () => {
 });
 ui.undo.addEventListener('click', () => dispatch({ type: 'undo', requestId: newId() }));
 
+// ---------- mic lab (diagnostics spike; the voice loop stays off while a test runs) ----------
+const lab = createMicLab({
+  log,
+  onState: (key) => {
+    ui.labStop.hidden = !key;
+    for (const b of ui.labButtons) b.disabled = Boolean(key);
+    ui.labStatus.textContent = key ? `Running ${LAB_RUNS[key].label}… speak your test phrases.` : 'Done. Tap Copy report.';
+  },
+});
+for (const b of ui.labButtons) {
+  b.addEventListener('click', () => {
+    dispatch({ type: 'cancel' });
+    voice.abort();
+    voice.cancelSpeech();
+    setTimeout(() => lab.start(b.dataset.lab), 400); // let the app's own recogniser release the mic
+  });
+}
+ui.labStop.addEventListener('click', () => lab.stop());
+
 function wake(reason) {
+  if (lab.running()) return;
   log(`wake: ${reason}`);
   drainQueue();
   if (tokenStore.get()) dispatch({ type: 'start' });
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') dispatch({ type: 'cancel' });
+  if (document.visibilityState === 'hidden') { lab.stop('app hidden'); dispatch({ type: 'cancel' }); }
   else wake('resume');
 });
 window.addEventListener('online', () => drainQueue());
