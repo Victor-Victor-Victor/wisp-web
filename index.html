@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1830">
+  <meta name="description" content="WISP — voice-first household inventory">
+  <title>WISP</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>WISP</h1>
+    <span class="chip" id="mode">…</span>
+    <span class="ver" id="ver"></span>
+  </header>
+
+  <main>
+    <section class="voice">
+      <button id="mic" class="mic" aria-label="Start listening">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+      </button>
+      <p id="status" class="status" aria-live="polite">Starting…</p>
+      <p id="transcript" class="transcript"></p>
+      <p id="reply" class="reply"></p>
+      <button id="fallback" class="fallback" hidden>Tap to continue</button>
+    </section>
+
+    <section class="card" aria-labelledby="results-h">
+      <h2 id="results-h">Spike results <span id="attempt-label"></span></h2>
+      <dl id="results" class="results"></dl>
+      <ol id="history" class="history"></ol>
+      <div class="actions">
+        <button id="copy" class="btn primary">Copy report</button>
+        <button id="clear" class="btn">Clear</button>
+      </div>
+      <p id="copy-status" class="copy-status" aria-live="polite"></p>
+      <textarea id="report-fallback" class="report-fallback" readonly hidden></textarea>
+    </section>
+
+    <details class="card" open>
+      <summary>Event log</summary>
+      <pre id="log" class="log"></pre>
+    </details>
+  </main>
+</body>
+</html>
