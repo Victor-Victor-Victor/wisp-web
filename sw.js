@@ -1,11 +1,17 @@
 // WISP service worker. Bump CACHE_VERSION on every web deploy.
-const CACHE_VERSION = 'wisp-v1';
+const CACHE_VERSION = 'wisp-v2';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
   './css/app.css',
   './js/app.js',
+  './js/config.js',
+  './js/dialog.js',
+  './js/voice.js',
+  './js/backend.js',
+  './js/queue.js',
+  './js/setup.js',
   './js/utterance.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -13,7 +19,13 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' bypasses the HTTP cache (GitHub Pages sends max-age=600), so a new version never
+  // precaches stale files.
+  event.waitUntil(
+    caches.open(CACHE_VERSION)
+      .then((c) => c.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {

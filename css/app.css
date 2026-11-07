@@ -6,8 +6,6 @@
   --muted: #8fa0bf;
   --teal: #2dd4bf;
   --teal-glow: rgba(45, 212, 191, 0.45);
-  --good: #4ade80;
-  --bad: #f87171;
   --warn: #fbbf24;
   color-scheme: dark;
 }
@@ -18,63 +16,84 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 18px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
 }
 
+[hidden] { display: none !important; }
+
 .top { display: flex; align-items: center; gap: 10px; padding: 14px 0 6px; }
 .top h1 { margin: 0; font-size: 22px; letter-spacing: 0.12em; color: var(--teal); }
-.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
 .ver { margin-left: auto; font-size: 12px; color: var(--muted); }
 
 main { max-width: 640px; margin: 0 auto; }
 
-.voice { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 20px 0 12px; }
+.voice { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 24px 0 8px; }
 
 .mic {
-  width: 148px; height: 148px; border-radius: 50%;
+  position: relative;
+  width: 168px; height: 168px; border-radius: 50%;
   border: 2px solid var(--teal); background: var(--surface);
   display: grid; place-items: center; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.mic svg { width: 64px; height: 64px; fill: var(--teal); }
+.mic svg { width: 72px; height: 72px; fill: var(--teal); }
 .mic.listening { background: var(--teal); animation: pulse 1.2s ease-out infinite; }
 .mic.listening svg { fill: var(--bg); }
-.mic.speaking { box-shadow: 0 0 0 6px var(--surface-2); }
+.mic.speaking { box-shadow: 0 0 0 8px var(--surface-2); }
+.mic .spinner {
+  position: absolute; inset: -8px; border-radius: 50%;
+  border: 4px solid transparent; border-top-color: var(--teal);
+  opacity: 0;
+}
+.mic.thinking .spinner { opacity: 1; animation: spin 0.9s linear infinite; }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 var(--teal-glow); }
-  100% { box-shadow: 0 0 0 36px rgba(45, 212, 191, 0); }
+  100% { box-shadow: 0 0 0 40px rgba(45, 212, 191, 0); }
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.status { margin: 18px 0 4px; color: var(--muted); font-size: 18px; }
+.status { margin: 18px 0 4px; color: var(--muted); font-size: 19px; min-height: 1.4em; }
 .transcript { margin: 4px 0; font-size: 24px; font-weight: 600; min-height: 1.4em; overflow-wrap: anywhere; }
-.reply { margin: 4px 0; color: var(--teal); font-size: 19px; min-height: 1.4em; overflow-wrap: anywhere; }
+.reply { margin: 6px 0; color: var(--teal); font-size: 21px; min-height: 1.4em; overflow-wrap: anywhere; }
 
-.fallback {
-  margin-top: 14px; width: 100%; min-height: 64px; border-radius: 14px;
-  border: 0; background: var(--warn); color: #1a1300; font-size: 20px; font-weight: 700;
+.undo {
+  margin-top: 12px; min-width: 200px; min-height: 64px; border-radius: 16px;
+  border: 2px solid var(--warn); background: transparent; color: var(--warn);
+  font-size: 22px; font-weight: 700;
 }
+
+.results { list-style: none; margin: 16px 0 0; padding: 0; width: 100%; text-align: left; }
+.results li {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-bottom: 1px solid var(--surface-2); font-size: 19px;
+}
+.results .where { color: var(--muted); }
 
 .card { background: var(--surface); border-radius: 16px; padding: 14px 16px; margin: 14px 0; }
-.card h2, .card summary { margin: 0 0 8px; font-size: 16px; color: var(--muted); font-weight: 600; }
-.card summary { cursor: pointer; }
+.card h2 { margin: 0 0 8px; font-size: 17px; color: var(--muted); font-weight: 600; }
+.card summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.setup { border: 2px solid var(--warn); }
+.setup p { margin: 0 0 10px; }
+.row { display: flex; gap: 10px; margin-top: 10px; }
+.row input {
+  flex: 1; min-width: 0; min-height: 52px; border-radius: 12px; border: 1px solid var(--surface-2);
+  background: var(--bg); color: var(--text); font-size: 17px; padding: 0 12px;
+}
 
-.results { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
-.results dt { color: var(--muted); }
-.results dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-.good { color: var(--good); }
-.bad { color: var(--bad); }
+.attention { list-style: none; margin: 0; padding: 0; }
+.attention li { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--surface-2); }
+.attention q { font-weight: 600; }
+.attention span { color: var(--muted); }
+.hint { margin: 4px 0 10px; color: var(--muted); font-size: 15px; }
 
-.history { margin: 10px 0 0; padding-left: 20px; font-size: 13px; color: var(--muted); }
-.history:empty { display: none; }
+.notices p { margin: 8px 0; padding: 10px 14px; border-radius: 12px; background: var(--surface); color: var(--muted); font-size: 16px; }
 
-.actions { display: flex; gap: 10px; margin-top: 14px; }
 .btn {
-  flex: 1; min-height: 52px; border-radius: 12px; border: 1px solid var(--surface-2);
+  min-height: 52px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--surface-2);
   background: var(--surface-2); color: var(--text); font-size: 17px; font-weight: 600;
 }
 .btn.primary { background: var(--teal); border-color: var(--teal); color: var(--bg); }
-.copy-status { margin: 8px 0 0; font-size: 14px; color: var(--muted); min-height: 1.2em; }
-.report-fallback { width: 100%; height: 160px; margin-top: 8px; background: var(--bg); color: var(--text); font: 12px ui-monospace, monospace; }
+.btn.small { min-height: 40px; justify-self: start; font-size: 15px; }
 
-.log { margin: 0; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
+.log { margin: 10px 0; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto; }

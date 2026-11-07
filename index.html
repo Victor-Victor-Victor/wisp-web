@@ -14,36 +14,47 @@
 <body>
   <header class="top">
     <h1>WISP</h1>
-    <span class="chip" id="mode">…</span>
     <span class="ver" id="ver"></span>
   </header>
 
   <main>
+    <section class="setup card" id="setup" hidden>
+      <h2>Set up this phone</h2>
+      <p id="setup-msg">On your computer, open the WISP setup code and scan it with this phone's camera.</p>
+      <details>
+        <summary>Or paste the token</summary>
+        <div class="row">
+          <input id="token-input" type="password" autocomplete="off" spellcheck="false" placeholder="WISP token" aria-label="WISP token">
+          <button id="token-save" class="btn primary">Save</button>
+        </div>
+      </details>
+    </section>
+
     <section class="voice">
-      <button id="mic" class="mic" aria-label="Start listening">
+      <button id="mic" class="mic idle" aria-label="Talk to WISP">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+        <span class="spinner" aria-hidden="true"></span>
       </button>
-      <p id="status" class="status" aria-live="polite">Starting…</p>
+      <p id="status" class="status" aria-live="polite"></p>
       <p id="transcript" class="transcript"></p>
-      <p id="reply" class="reply"></p>
-      <button id="fallback" class="fallback" hidden>Tap to continue</button>
+      <p id="reply" class="reply" aria-live="polite"></p>
+      <button id="undo" class="undo" hidden>Undo</button>
+      <ul id="results" class="results" hidden></ul>
     </section>
 
-    <section class="card" aria-labelledby="results-h">
-      <h2 id="results-h">Spike results <span id="attempt-label"></span></h2>
-      <dl id="results" class="results"></dl>
-      <ol id="history" class="history"></ol>
-      <div class="actions">
-        <button id="copy" class="btn primary">Copy report</button>
-        <button id="clear" class="btn">Clear</button>
-      </div>
-      <p id="copy-status" class="copy-status" aria-live="polite"></p>
-      <textarea id="report-fallback" class="report-fallback" readonly hidden></textarea>
+    <section class="card" id="attention" hidden>
+      <h2>Needs attention</h2>
+      <p class="hint">Saved while offline, but WISP couldn't finish these. Say them again, then dismiss.</p>
+      <ul id="attention-list" class="attention"></ul>
     </section>
 
-    <details class="card" open>
-      <summary>Event log</summary>
+    <div id="notices" class="notices" aria-live="polite"></div>
+
+    <details class="card diagnostics">
+      <summary>Diagnostics</summary>
       <pre id="log" class="log"></pre>
+      <button id="copy" class="btn">Copy report</button>
+      <p id="copy-status" class="hint"></p>
     </details>
   </main>
 </body>
