@@ -3,12 +3,11 @@
 import { APP_VERSION, BACKEND_URL, TIMING } from './config.js';
 import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
-import { createCuePlayer } from './cues.js';
+import { createCuePlayer, CUE_GUIDE, describeCue } from './cues.js';
 import { createSettings } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
-import { createMicLab, LAB_RUNS } from './miclab.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -17,7 +16,7 @@ const ui = {
   attentionList: $('attention-list'), setup: $('setup'), setupMsg: $('setup-msg'), tokenInput: $('token-input'),
   tokenSave: $('token-save'), gear: $('gear'), settings: $('settings'), vibrate: $('set-vibrate'),
   log: $('log'), copy: $('copy'), copyStatus: $('copy-status'),
-  labStop: $('lab-stop'), labStatus: $('lab-status'), labButtons: [...document.querySelectorAll('[data-lab]')],
+  guide: $('guide'), vibrateRow: $('vibrate-row'),
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -37,7 +36,7 @@ const backend = createBackend({
 });
 const queue = createQueue(indexedDbStore(window.indexedDB));
 const voice = createVoice({ log, onInterim: (t) => { ui.transcript.textContent = t; } });
-const cues = createCuePlayer({ getSettings: settings.get, log });
+const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t) });
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
 // ---------- dialog loop ----------
@@ -56,15 +55,15 @@ function dispatch(ev) {
 function send(req) {
   if (req.kind === 'list') return backend.list(req.transcript, req.location, req.requestId);
   if (req.kind === 'answer') return backend.answer(req.transcript, req.pending, req.clarify, req.requestId);
-  if (req.kind === 'undo') return backend.undo(req.requestId);
+  if (req.kind === 'undo') return backend.undo(req.requestId, req.txnId);
   return backend.command(req.transcript, req.requestId);
 }
 
 async function run(fx) {
   switch (fx.type) {
     case 'cue':
-      log(`cue ${fx.kind}`);
-      cueDone = cues.play(fx.kind);
+      log(`cue ${fx.kind}${fx.quiet ? ' (quiet)' : ''}`);
+      cueDone = cues.play(fx.kind, { quiet: fx.quiet });
       break;
     case 'listen': {
       await cueDone; // never let the mic hear our own cue
@@ -83,6 +82,7 @@ async function run(fx) {
     case 'stopListening': voice.stop(); break;
     case 'abortListening': voice.abort(); break;
     case 'speak':
+      await cueDone; // let an "Okay" or a tone finish first
       ui.reply.textContent = fx.text;
       await voice.speak(fx.text);
       dispatch({ type: 'spoken', id: fx.id });
@@ -100,16 +100,14 @@ async function run(fx) {
       dispatch({ type: 'response', requestId: req.requestId, result });
       break;
     }
-    case 'showItem': showItem(fx.status, fx.text); break;
+    case 'showItem': showItem(fx.status, fx.text, fx.txn); break;
     case 'clearItems':
       ui.items.replaceChildren();
       ui.results.replaceChildren();
       ui.results.hidden = true;
       ui.reply.textContent = '';
       break;
-    case 'showUndo': showUndo(); break;
-    case 'undoCountdown': startUndoCountdown(); break;
-    case 'hideUndo': hideUndo(); break;
+    case 'undoCountdown': startUndoCountdown(fx.epoch); break;
     case 'showData': renderResults(fx.data); break;
     case 'showSetup': showSetup(); break;
     case 'attention':
@@ -132,10 +130,11 @@ function statusText() {
   const sess = state.session;
   if (state.mode === 'listening') {
     if (state.listenKind === 'answer') return 'Listening for your answer…';
-    if (sess?.followup) return 'Anything else?';
+    if (state.listenKind === 'grace') return 'Anything else? (or say "that\'s it")';
     if (sess?.continuing) return 'Go on… (say "that\'s it" when done)';
     return 'Listening…';
   }
+  if (state.mode === 'paused') return 'List paused — tap the mic to go on';
   if (state.mode === 'working') return 'Working…';
   if (state.mode === 'speaking') return '';
   return 'Tap the mic to talk';
@@ -149,19 +148,39 @@ function render() {
   const sess = state.session;
   const saved = sess?.applied?.filter((a) => a.kind === 'saved').length ?? 0;
   const toCheck = sess?.held?.length ?? 0;
-  if (sess && (sess.chunks > 1 || sess.continuing) && !sess.followup) {
+  if (sess && (sess.chunks > 1 || sess.continuing || state.mode === 'paused')) {
     ui.banner.hidden = false;
     ui.banner.textContent = `Listing${sess.location?.name ? `: ${sess.location.name}` : ''} · ${saved} saved${toCheck ? ` · ${toCheck} to check` : ''}`;
   } else {
     ui.banner.hidden = true;
   }
+  renderUndo();
   if (state.mode === 'idle' && reloadWhenIdle) window.location.reload();
 }
 
+// Undo (ADR-010): one tap = the newest item of *this* list, by txn_id. Busy while it's on its way.
+function renderUndo() {
+  const u = state.undo;
+  const busy = Boolean(u.waiting || u.inFlight);
+  const top = u.stack[u.stack.length - 1];
+  ui.undo.hidden = !busy && !top;
+  ui.undo.disabled = busy;
+  ui.undo.textContent = busy ? 'Undoing…' : top ? `Undo: ${top.label}` : 'Undo';
+}
+
 const ICONS = { saved: '✓', held: '?', error: '!', undo: '↶', queued: '⏳' };
-function showItem(status, text) {
+function showItem(status, text, txn) {
   if (status === 'pending') return; // the live transcript line already shows what was heard
+  if (status === 'undo' && txn) {
+    const row = ui.items.querySelector(`li[data-txn="${CSS.escape(txn)}"]`);
+    if (row) { // strike through the saved row instead of adding another line
+      row.className = 'item undone';
+      row.querySelector('.icon').textContent = ICONS.undo;
+      return;
+    }
+  }
   const li = document.createElement('li');
+  if (txn && status === 'saved') li.dataset.txn = txn;
   li.className = `item ${status === 'undo' ? 'undone' : status}`;
   const icon = document.createElement('span');
   icon.className = 'icon';
@@ -173,20 +192,11 @@ function showItem(status, text) {
   li.scrollIntoView({ block: 'nearest' });
 }
 
-// Undo stays visible while a list is going, and for 10 s after the wrap-up (ADR-009).
+// Undo stays visible while a list is going, and for 10 s after the read-back (ADR-009/010).
 let undoTimer = null;
-function showUndo() {
+function startUndoCountdown(epoch) {
   clearTimeout(undoTimer);
-  ui.undo.hidden = false;
-}
-function startUndoCountdown() {
-  clearTimeout(undoTimer);
-  const txn = state.undoTxn;
-  undoTimer = setTimeout(() => dispatch({ type: 'undoExpired', txn }), TIMING.undoVisibleMs);
-}
-function hideUndo() {
-  clearTimeout(undoTimer);
-  ui.undo.hidden = true;
+  undoTimer = setTimeout(() => dispatch({ type: 'undoExpired', epoch }), TIMING.undoVisibleMs);
 }
 
 function renderResults(data) {
@@ -295,27 +305,43 @@ ui.tokenSave.addEventListener('click', async () => {
 // ---------- settings panel ----------
 function renderSettings() {
   const s = settings.get();
-  for (const input of document.querySelectorAll('input[name="sounds"]')) input.checked = input.value === s.sounds;
+  for (const input of document.querySelectorAll('input[name="style"]')) input.checked = input.value === s.style;
   ui.vibrate.checked = s.vibrate;
+  ui.vibrateRow.hidden = s.style === 'vibrate' || s.style === 'silent';
+  ui.guide.replaceChildren(...CUE_GUIDE.map((g) => {
+    const li = document.createElement('li');
+    const play = document.createElement('button');
+    play.className = 'btn small';
+    play.textContent = '▶';
+    play.setAttribute('aria-label', `Play: ${g.meaning}`);
+    play.addEventListener('click', () => cues.play(g.kind));
+    const text = document.createElement('span');
+    const how = document.createElement('strong');
+    how.textContent = describeCue(g.kind, s);
+    text.append(how, document.createTextNode(` means ${g.meaning}.`));
+    li.append(play, text);
+    return li;
+  }));
 }
 ui.gear.addEventListener('click', () => {
   ui.settings.hidden = !ui.settings.hidden;
   renderSettings();
 });
-for (const input of document.querySelectorAll('input[name="sounds"]')) {
+for (const input of document.querySelectorAll('input[name="style"]')) {
   input.addEventListener('change', () => {
-    settings.set({ sounds: input.value });
-    cues.play('listening'); // preview
+    settings.set({ style: input.value });
+    renderSettings();
+    cues.play('heard'); // preview
   });
 }
 ui.vibrate.addEventListener('change', () => {
   settings.set({ vibrate: ui.vibrate.checked });
-  cues.play('tick');
+  renderSettings();
+  cues.play('heard');
 });
 
 // ---------- events ----------
 ui.mic.addEventListener('click', () => {
-  if (lab.running()) return;
   if (!tokenStore.get()) {
     showSetup();
     return;
@@ -324,34 +350,14 @@ ui.mic.addEventListener('click', () => {
 });
 ui.undo.addEventListener('click', () => dispatch({ type: 'undo', requestId: newId() }));
 
-// ---------- mic lab (diagnostics spike; the voice loop stays off while a test runs) ----------
-const lab = createMicLab({
-  log,
-  onState: (key) => {
-    ui.labStop.hidden = !key;
-    for (const b of ui.labButtons) b.disabled = Boolean(key);
-    ui.labStatus.textContent = key ? `Running ${LAB_RUNS[key].label}… speak your test phrases.` : 'Done. Tap Copy report.';
-  },
-});
-for (const b of ui.labButtons) {
-  b.addEventListener('click', () => {
-    dispatch({ type: 'cancel' });
-    voice.abort();
-    voice.cancelSpeech();
-    setTimeout(() => lab.start(b.dataset.lab), 400); // let the app's own recogniser release the mic
-  });
-}
-ui.labStop.addEventListener('click', () => lab.stop());
-
 function wake(reason) {
-  if (lab.running()) return;
   log(`wake: ${reason}`);
   drainQueue();
   if (tokenStore.get()) dispatch({ type: 'start' });
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { lab.stop('app hidden'); dispatch({ type: 'cancel' }); }
+  if (document.visibilityState === 'hidden') dispatch({ type: 'cancel' });
   else wake('resume');
 });
 window.addEventListener('online', () => drainQueue());
@@ -360,7 +366,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | sounds: ${s.sounds} | vibrate: ${s.vibrate}`,
+    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.vibrate ? ' + vibrate' : ''}`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {

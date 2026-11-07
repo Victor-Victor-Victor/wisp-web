@@ -1,5 +1,5 @@
 // WISP service worker. Bump CACHE_VERSION on every web deploy.
-const CACHE_VERSION = 'wisp-v4';
+const CACHE_VERSION = 'wisp-v5';
 const SHELL = [
   './',
   './index.html',
@@ -15,7 +15,6 @@ const SHELL = [
   './js/queue.js',
   './js/setup.js',
   './js/utterance.js',
-  './js/miclab.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/maskable-512.png',

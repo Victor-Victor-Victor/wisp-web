@@ -22,13 +22,25 @@
     <section class="card" id="settings" hidden>
       <h2>Cues</h2>
       <fieldset class="choices">
-        <legend>Sounds</legend>
-        <label><input type="radio" name="sounds" value="full"> Distinct sounds</label>
-        <label><input type="radio" name="sounds" value="minimal"> Fewer sounds (listening only)</label>
-        <label><input type="radio" name="sounds" value="off"> No sounds (visual only)</label>
+        <legend>How WISP answers between sentences</legend>
+        <label><input type="radio" name="style" value="voice"> Voice — a quick "Okay" after each phrase</label>
+        <label><input type="radio" name="style" value="tones"> Tones — short sounds shaped like speech</label>
+        <label><input type="radio" name="style" value="beeps"> Beeps — high = OK, low = needs you</label>
+        <label><input type="radio" name="style" value="vibrate"> Vibration only</label>
+        <label><input type="radio" name="style" value="silent"> Silent — screen only</label>
       </fieldset>
-      <label class="toggle"><input type="checkbox" id="set-vibrate"> Vibration</label>
-      <p class="hint">Spoken questions and the wrap-up always speak. Rising tone = listening, click = saved, two low notes = will ask later, low tone = problem, falling tone = mic closed.</p>
+      <label class="toggle" id="vibrate-row"><input type="checkbox" id="set-vibrate"> Also vibrate</label>
+
+      <h2>Cue guide</h2>
+      <ul id="guide" class="guide"></ul>
+      <h2>How to talk to WISP</h2>
+      <ul class="howto">
+        <li>Say the place first: "In the garage freezer, a chicken breast, and…"</li>
+        <li>End each item with "and" when more is coming. Pause as long as you like — after a long pause the list pauses; tap the mic to go on.</li>
+        <li>Say "that's it" when you're done. WISP reads the list back and asks about anything it wasn't sure of.</li>
+        <li>Undo removes the newest item from this list, one per tap.</li>
+      </ul>
+      <p class="hint">Android plays its own beep each time the mic opens. That means "listening", and WISP can't turn it off. Questions and the read-back are always spoken.</p>
     </section>
 
     <section class="setup card" id="setup" hidden>
@@ -52,7 +64,7 @@
       <p id="banner" class="banner" hidden></p>
       <p id="transcript" class="transcript"></p>
       <p id="reply" class="reply" aria-live="polite"></p>
-      <button id="undo" class="undo" hidden>Undo last</button>
+      <button id="undo" class="undo" hidden>Undo</button>
       <ol id="items" class="items"></ol>
       <ul id="results" class="results" hidden></ul>
     </section>
@@ -67,17 +79,6 @@
 
     <details class="card diagnostics">
       <summary>Diagnostics</summary>
-      <div class="lab">
-        <h2>Mic lab</h2>
-        <p class="hint">Each test listens for 60 seconds. Nothing is saved. Count the beeps you hear.</p>
-        <div class="lab-buttons">
-          <button class="btn" data-lab="a">A: one long session</button>
-          <button class="btn" data-lab="b">B: long session + "Okay"</button>
-          <button class="btn" data-lab="c">C: phrase by phrase</button>
-          <button class="btn" id="lab-stop" hidden>Stop test</button>
-        </div>
-        <p id="lab-status" class="hint" aria-live="polite"></p>
-      </div>
       <pre id="log" class="log"></pre>
       <button id="copy" class="btn">Copy report</button>
       <p id="copy-status" class="hint"></p>

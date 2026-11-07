@@ -28,10 +28,11 @@ const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
 
 /**
  * How a finished utterance moves a spoken list along.
- * @returns {{kind:"end"} | {kind:"cancel"} | {kind:"chunk", text:string, continues:boolean}}
+ * @returns {{kind:"end"} | {kind:"cancel"} | {kind:"chunk", text:string, continues:boolean, ends?:true}}
  *  - "end": the person closed the list ("that's it", "done").
  *  - "cancel": "never mind" / "cancel".
- *  - "chunk": something to send; `continues` is true when it ended with "and…" (more is coming).
+ *  - "chunk": something to send; `continues` is true when it ended with "and…" (more is coming), `ends` when it
+ *    closed the list in the same breath ("a loaf of bread and that's it").
  */
 export function classifyUtterance(raw) {
   const text = stripWakeWord(String(raw ?? '')).replace(/\s+/g, ' ').trim();
@@ -40,7 +41,7 @@ export function classifyUtterance(raw) {
   if (BARE_AND.test(text)) return { kind: 'chunk', text: '', continues: true }; // just "and…": keep listening
   if (END_TAIL.test(text)) {
     const body = text.replace(END_TAIL, '').replace(LEADING_AND, '').trim();
-    return body ? { kind: 'chunk', text: body, continues: false } : { kind: 'end' };
+    return body ? { kind: 'chunk', text: body, continues: false, ends: true } : { kind: 'end' };
   }
   const continues = AND_TAIL.test(text);
   const body = text.replace(AND_TAIL, '').replace(LEADING_AND, '').trim();

@@ -1,15 +1,16 @@
-// Per-phone preferences (localStorage). Cue sounds: full (default) / minimal (only "listening") / off (visual
-// only — spoken questions and wrap-ups still speak). Vibration: off by default.
+// Per-phone preferences (localStorage). Cue style (ADR-010): voice (default — a spoken "Okay" per phrase), tones
+// (speech-shaped glides), beeps (high/low), vibrate (buzzes only), silent (visual only). Spoken questions and the
+// end-of-list read-back always speak. "Also vibrate" adds buzzes to voice, tones or beeps.
 const KEY = 'wisp.settings';
-export const DEFAULTS = Object.freeze({ sounds: 'full', vibrate: false });
-export const SOUND_LEVELS = ['full', 'minimal', 'off'];
+export const CUE_STYLES = ['voice', 'tones', 'beeps', 'vibrate', 'silent'];
+export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false });
+const FROM_OLD_SOUNDS = { full: 'voice', minimal: 'beeps', off: 'silent' }; // 0.4.x settings
 
 function clean(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
-  return {
-    sounds: SOUND_LEVELS.includes(s.sounds) ? s.sounds : DEFAULTS.sounds,
-    vibrate: s.vibrate === true,
-  };
+  let style = CUE_STYLES.includes(s.style) ? s.style : null;
+  if (!style && s.sounds in FROM_OLD_SOUNDS) style = s.sounds === 'off' && s.vibrate === true ? 'vibrate' : FROM_OLD_SOUNDS[s.sounds];
+  return { style: style ?? DEFAULTS.style, vibrate: s.vibrate === true };
 }
 
 export function createSettings(storage) {

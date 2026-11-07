@@ -49,6 +49,7 @@ main { max-width: 640px; margin: 0 auto; }
 }
 .mic.working .spinner, .mic.busy .spinner { opacity: 1; animation: spin 0.9s linear infinite; }
 .mic.idle { opacity: 0.85; }
+.mic.paused { border-style: dashed; opacity: 0.9; }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 var(--teal-glow); }
   100% { box-shadow: 0 0 0 40px rgba(45, 212, 191, 0); }
@@ -112,5 +113,10 @@ main { max-width: 640px; margin: 0 auto; }
 .choices legend { color: var(--muted); margin-bottom: 6px; }
 .choices label, .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 17px; }
 .choices input, .toggle input { width: 22px; height: 22px; accent-color: var(--teal); }
-.lab h2 { margin: 10px 0 4px; }
-.lab-buttons { display: grid; gap: 8px; }
+.undo:disabled { opacity: 0.6; }
+.guide, .howto { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 16px; }
+.guide li { display: flex; gap: 10px; align-items: center; }
+.guide strong { color: var(--teal); font-weight: 600; }
+.howto li { padding-left: 1em; text-indent: -1em; }
+.howto li::before { content: "• "; color: var(--teal); }
+#settings h2 { margin-top: 14px; }
