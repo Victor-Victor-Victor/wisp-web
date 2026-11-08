@@ -36,7 +36,7 @@ const backend = createBackend({
 });
 const queue = createQueue(indexedDbStore(window.indexedDB));
 const voice = createVoice({ log, onInterim: (t) => { ui.transcript.textContent = t; } });
-const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t) });
+const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs });
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
 // ---------- dialog loop ----------
@@ -55,7 +55,7 @@ function dispatch(ev) {
 function send(req) {
   if (req.kind === 'list') return backend.list(req.transcript, req.location, req.requestId);
   if (req.kind === 'answer') return backend.answer(req.transcript, req.pending, req.clarify, req.requestId);
-  if (req.kind === 'undo') return backend.undo(req.requestId, req.txnId);
+  if (req.kind === 'undo') return backend.undo(req.requestId, req.txnIds);
   return backend.command(req.transcript, req.requestId);
 }
 
@@ -63,7 +63,8 @@ async function run(fx) {
   switch (fx.type) {
     case 'cue':
       log(`cue ${fx.kind}${fx.quiet ? ' (quiet)' : ''}`);
-      cueDone = cues.play(fx.kind, { quiet: fx.quiet });
+      // every cue still playing counts: an "Okay" followed by an (empty) listening cue must still hold the mic back
+      cueDone = Promise.all([cueDone, cues.play(fx.kind, { quiet: fx.quiet })]);
       break;
     case 'listen': {
       await cueDone; // never let the mic hear our own cue
@@ -75,7 +76,8 @@ async function run(fx) {
         dispatch({ type: 'heard', id: fx.id, text: r.text, requestId: newId() });
       } else {
         if (r.type === 'error') onListenError(r.error);
-        dispatch({ type: 'silence', id: fx.id, elapsedMs: Math.round(performance.now() - t0) });
+        if (r.speech) log('speech but no words');
+        dispatch({ type: 'silence', id: fx.id, elapsedMs: Math.round(performance.now() - t0), speech: Boolean(r.speech) });
       }
       break;
     }
@@ -108,6 +110,7 @@ async function run(fx) {
       ui.reply.textContent = '';
       break;
     case 'undoCountdown': startUndoCountdown(fx.epoch); break;
+    case 'pauseTimer': setTimeout(() => dispatch({ type: 'pauseExpired', id: fx.id }), fx.ms); break;
     case 'showData': renderResults(fx.data); break;
     case 'showSetup': showSetup(); break;
     case 'attention':

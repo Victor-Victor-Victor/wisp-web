@@ -6,10 +6,11 @@
 //                  ←─────────────────────────────────────────────────────────────────────────────────┘
 //          ──a phrase with no "and"──→ ack · 3 s grace listen (more speech continues the list)
 //          ──"that's it" / grace silence / tap──→ list closed ("done" cue)
-//   long silence after "and" → list *paused* (mic off, no Android beeps) until a tap resumes it
+//   long silence after "and" → list *paused* (mic off, no Android beeps) until a tap resumes it; 60 s → finished
 //   closed → held questions asked one by one (even while the last chunk is still saving) → spoken read-back → idle
 // Server results make no sound mid-list: they show on screen, and anything that needs you waits for the review.
-// Undo (the button) reverses exactly one item saved in *this* session, by txn_id — never anything older.
+// Undo (the button) reverses the newest *phrase* of this session — every item it saved, by txn_id — and is there as
+// soon as the phrase is heard (a tap while it's still saving waits for it). It never reaches anything older.
 // Every listen/speak/request has an id; events from a stale one are ignored.
 import { TIMING } from './config.js';
 import { classifyUtterance } from './utterance.js';
@@ -20,6 +21,7 @@ export const TEXT = {
   notSetUp: "This phone isn't set up yet. Scan the setup code on your computer.",
   serverError: 'Something went wrong with that one.',
   undoOffline: "I couldn't reach the inventory, so nothing was undone.",
+  undoQueued: "That one was saved for later because I couldn't reach the inventory, so it couldn't be undone.",
   okay: 'Okay.',
 };
 const READ_BACK_MAX = 6;
@@ -32,7 +34,7 @@ export function initialState() {
 
 function newSession(location) {
   return {
-    location, open: true, continuing: false, chunks: 0, silentMs: 0, queue: [], inFlight: null,
+    location, open: true, continuing: false, chunks: 0, silentMs: 0, graceRetried: false, queue: [], inFlight: null,
     applied: [], held: [], errors: [], replies: [], skipped: 0, undone: 0, cancelled: false, closeRequested: false,
   };
 }
@@ -54,6 +56,8 @@ const lower = (t) => String(t ?? '').toLowerCase();
 const stripNothing = (t) => String(t ?? '').replace(/\s*Nothing was (changed|saved)\.\s*$/, '').trim();
 const capitalize = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
 const pendingChunks = (sess) => Boolean(sess && (sess.inFlight || sess.queue.length));
+/** Chunks still saving, or an Undo still on its way: the read-back waits for both. */
+const settling = (s) => pendingChunks(s.session) || Boolean(s.undo.waiting || s.undo.inFlight);
 
 function chain(...steps) {
   return (s0) => {
@@ -134,7 +138,7 @@ function maybeFinish(s) {
   const sess = s.session;
   if (!sess || sess.open || s.review || s.mode === 'listening' || s.mode === 'speaking') return { state: s, effects: [] };
   if (sess.held.length && !sess.cancelled) return askHeld({ ...s, review: { index: 0, current: null, waiting: false } });
-  if (pendingChunks(sess)) return { state: { ...s, mode: 'working' }, effects: [] };
+  if (settling(s)) return { state: { ...s, mode: 'working' }, effects: [] };
   return wrapUp(s);
 }
 
@@ -144,7 +148,7 @@ function askHeld(s) {
     const sp = speak({ ...s, review: { ...s.review, waiting: false } }, item.question, 'answer');
     return { state: sp.state, effects: [{ type: 'cue', kind: 'needsYou' }, ...sp.effects] };
   }
-  if (pendingChunks(s.session)) return { state: { ...s, mode: 'working', review: { ...s.review, waiting: true } }, effects: [] };
+  if (settling(s)) return { state: { ...s, mode: 'working', review: { ...s.review, waiting: true } }, effects: [] };
   return wrapUp({ ...s, review: null });
 }
 
@@ -165,37 +169,43 @@ function wrapUp(s) {
 }
 
 // ---------- undo ----------
-function sendUndo(s, requestId) {
-  const top = s.undo.stack[s.undo.stack.length - 1];
-  if (!top) return { state: withUndo(s, { waiting: null }), effects: [] };
-  const inFlight = { requestId, txn_id: top.txn_id, label: top.label };
+// The stack holds one entry per phrase: {key (its requestId), label, txns, pending, cancelled, dropped}.
+const undoTop = (s) => s.undo.stack[s.undo.stack.length - 1];
+const withEntry = (s, key, patch) => withUndo(s, { stack: s.undo.stack.map((e) => (e.key === key ? { ...e, ...patch } : e)) });
+const withoutEntry = (s, key) => withUndo(s, { stack: s.undo.stack.filter((e) => e.key !== key) });
+
+function sendUndo(s, entry, requestId) {
+  const inFlight = { requestId, key: entry.key, txns: entry.txns, label: entry.label, dropped: entry.dropped ?? 0 };
   return {
     state: withUndo(s, { waiting: null, inFlight }),
-    effects: [{ type: 'send', request: { kind: 'undo', txnId: top.txn_id, requestId } }],
+    effects: [{ type: 'send', request: { kind: 'undo', txnIds: entry.txns, requestId } }],
   };
 }
 
-/** A tap that arrived while chunks were saving goes out once they've settled (so it undoes the newest item). */
-function flushUndo(s) {
-  if (!s.undo.waiting || pendingChunks(s.session)) return { state: s, effects: [] };
-  return sendUndo(s, s.undo.waiting);
+function countUndone(s, n) {
+  return s.session && n ? withSession(s, { undone: s.session.undone + n }) : s;
+}
+
+/** A tapped phrase has finished saving: undo what it saved (or, if it saved nothing, just let it go). */
+function settleCancelled(s, key) {
+  const entry = s.undo.stack.find((e) => e.key === key);
+  if (!entry?.cancelled) return { state: s, effects: [] };
+  if (entry.txns.length) return sendUndo(s, entry, s.undo.waiting);
+  const st = countUndone(withUndo(withoutEntry(s, key), { waiting: null }), entry.dropped ?? 0);
+  return { state: st, effects: entry.dropped ? [{ type: 'showItem', status: 'undo', text: `Undid: ${entry.label}` }] : [] };
 }
 
 function applyUndoResult(s, r) {
-  const { txn_id: txn, label } = s.undo.inFlight;
+  const { key, txns, label, dropped } = s.undo.inFlight;
   let st = withUndo(s, { inFlight: null });
   const effects = [];
   const done = r.kind === 'ok' && (r.data.status === 'ok' || r.data.reply === "That's already undone.");
   if (done) {
-    st = withUndo(st, { stack: st.undo.stack.filter((e) => e.txn_id !== txn) });
-    if (st.session) {
-      st = withSession(st, {
-        undone: st.session.undone + 1,
-        applied: st.session.applied.map((a) => (a.txn_id === txn ? { ...a, undone: true } : a)),
-      });
-    }
-    effects.push({ type: 'showItem', status: 'undo', text: `Undid: ${label}`, txn });
+    st = countUndone(withoutEntry(st, key), txns.length + dropped);
+    if (st.session) st = withSession(st, { applied: st.session.applied.map((a) => (txns.includes(a.txn_id) ? { ...a, undone: true } : a)) });
+    for (const txn of txns) effects.push({ type: 'showItem', status: 'undo', text: `Undid: ${label}`, txn });
   } else {
+    st = withEntry(st, key, { cancelled: false });
     const text = r.kind === 'network' ? TEXT.undoOffline : r.kind === 'ok' ? r.data.reply : TEXT.serverError;
     effects.push({ type: 'cue', kind: 'problem' }, { type: 'showItem', status: 'error', text });
   }
@@ -207,6 +217,15 @@ function applyListResult(s, chunk, r) {
   let sess = { ...s.session, inFlight: null };
   let { undo } = s;
   const effects = [];
+  const entry = undo.stack.find((e) => e.key === chunk.requestId);
+  if (r.kind !== 'ok') {
+    // nothing of this phrase was saved (or it's queued for later): nothing to undo
+    undo = { ...undo, stack: undo.stack.filter((e) => e.key !== chunk.requestId) };
+    if (entry?.cancelled) {
+      undo = { ...undo, waiting: null };
+      if (r.kind === 'network') effects.push({ type: 'showItem', status: 'error', text: TEXT.undoQueued });
+    }
+  }
   if (r.kind === 'network') {
     if (!sess.errors.some((e) => e.reply === TEXT.offline)) sess.errors = [...sess.errors, { reply: TEXT.offline }];
     effects.push({ type: 'showItem', status: 'queued', text: chunk.transcript });
@@ -224,25 +243,39 @@ function applyListResult(s, chunk, r) {
     const d = r.data;
     const place = d.location?.name ?? sess.location?.name ?? null;
     sess.location = d.location ?? sess.location;
+    const txns = [];
+    const whats = [];
     for (const a of d.applied ?? []) {
       if (a.kind === 'undo') {
-        // a spoken "undo": the server reversed this person's newest save — the top of our stack
+        // a spoken "undo": the server reversed this person's newest save — the newest txn on our stack
         sess.undone += 1;
-        const top = undo.stack[undo.stack.length - 1];
-        if (top) {
-          undo = { ...undo, stack: undo.stack.slice(0, -1) };
-          sess.applied = sess.applied.map((x) => (x.txn_id === top.txn_id ? { ...x, undone: true } : x));
+        const i = undo.stack.findLastIndex((e) => e.key !== chunk.requestId && e.txns.length);
+        const txn = i >= 0 ? undo.stack[i].txns[undo.stack[i].txns.length - 1] : null;
+        if (txn) {
+          const left = undo.stack[i].txns.slice(0, -1);
+          undo = { ...undo, stack: left.length ? undo.stack.map((e, j) => (j === i ? { ...e, txns: left } : e)) : undo.stack.filter((_, j) => j !== i) };
+          sess.applied = sess.applied.map((x) => (x.txn_id === txn ? { ...x, undone: true } : x));
         }
-        effects.push({ type: 'showItem', status: 'undo', text: a.reply, txn: top?.txn_id });
+        effects.push({ type: 'showItem', status: 'undo', text: a.reply, txn });
         continue;
       }
       sess.applied = [...sess.applied, { ...a, place }];
-      undo = { ...undo, stack: [...undo.stack, { txn_id: a.txn_id, label: addParts(a.summary)?.what ?? a.summary }] };
+      if (a.txn_id) txns.push(a.txn_id);
+      whats.push(addParts(a.summary)?.what ?? a.summary);
       effects.push({ type: 'showItem', status: 'saved', text: capitalize(a.summary), txn: a.txn_id });
     }
-    for (const h of d.held ?? []) effects.push({ type: 'showItem', status: 'held', text: h.question });
+    // a phrase Undo was tapped for: its questions are dropped, its saves undone (settleCancelled)
+    const held = entry?.cancelled ? [] : (d.held ?? []);
+    if (entry) {
+      const dropped = entry.cancelled ? (d.held ?? []).length : 0;
+      const patch = { txns, pending: false, dropped, label: whats.length ? joinList(whats) : entry.label };
+      undo = txns.length || entry.cancelled
+        ? { ...undo, stack: undo.stack.map((e) => (e.key === entry.key ? { ...e, ...patch } : e)) }
+        : { ...undo, stack: undo.stack.filter((e) => e.key !== entry.key) }; // only questions: each gets its own Undo once answered
+    }
+    for (const h of held) effects.push({ type: 'showItem', status: 'held', text: h.question });
     for (const e of d.errors ?? []) effects.push({ type: 'showItem', status: 'error', text: stripNothing(e.reply) });
-    sess.held = [...sess.held, ...(d.held ?? [])];
+    sess.held = [...sess.held, ...held];
     sess.errors = [...sess.errors, ...(d.errors ?? [])];
     if (d.reply) sess.replies = [...sess.replies, d.reply];
     if (d.data) effects.push({ type: 'showData', data: d.data });
@@ -263,7 +296,10 @@ function applyAnswerResult(s, r) {
     const saved = { kind: 'saved', txn_id: r.data.txn_id, summary, place: s.session.location?.name ?? null };
     patch = { applied: [...s.session.applied, saved] };
     effects.push({ type: 'showItem', status: 'saved', text: capitalize(summary), txn: r.data.txn_id });
-    if (r.data.txn_id) s = withUndo(s, { stack: [...s.undo.stack, { txn_id: r.data.txn_id, label: addParts(summary)?.what ?? summary }] });
+    if (r.data.txn_id) {
+      const entry = { key: s.review.current.requestId, label: addParts(summary)?.what ?? summary, txns: [r.data.txn_id], pending: false, cancelled: false };
+      s = withUndo(s, { stack: [...s.undo.stack, entry] });
+    }
   } else if (r.kind === 'ok' && r.data.status === 'cancelled') {
     patch = { skipped: s.session.skipped + 1 };
   } else {
@@ -278,9 +314,9 @@ function applyAnswerResult(s, r) {
 
 /**
  * @param s   current state
- * @param ev  {type:"start"} | {type:"heard", id, text, requestId} | {type:"silence", id, elapsedMs?}
+ * @param ev  {type:"start"} | {type:"heard", id, text, requestId} | {type:"silence", id, elapsedMs?, speech?}
  *            | {type:"response", requestId, result} | {type:"spoken", id} | {type:"undo", requestId}
- *            | {type:"undoExpired", epoch} | {type:"cancel"}
+ *            | {type:"undoExpired", epoch} | {type:"pauseExpired", id} | {type:"cancel"}
  * @returns {{state, effects: object[]}}
  */
 export function step(s, ev) {
@@ -320,13 +356,14 @@ export function step(s, ev) {
       }
 
       // a list listen (first, after "and", or the grace listen after a phrase without "and")
-      let st = withSession(s, { silentMs: 0 });
+      let st = withSession(s, { silentMs: 0, graceRetried: false });
       if (c.kind === 'end') return chain((x) => closeList(x), maybeFinish)(st);
       if (c.kind === 'cancel') return chain((x) => closeList(x, { cancelled: true, queue: [] }), maybeFinish)(st);
       const shown = [];
       if (c.text) {
         const chunk = { kind: 'list', transcript: c.text, requestId: ev.requestId };
         st = withSession(st, { queue: [...st.session.queue, chunk], chunks: st.session.chunks + 1 });
+        st = withUndo(st, { stack: [...st.undo.stack, { key: ev.requestId, label: c.text, txns: [], pending: true, cancelled: false }] });
         shown.push({ type: 'showItem', status: 'pending', text: c.text });
       }
       if (st.session.closeRequested || c.ends) {
@@ -350,10 +387,17 @@ export function step(s, ev) {
         return { state: { ...s, mode: 'idle', listenKind: null, session: null, lastLocation: sess?.location ?? s.lastLocation }, effects: [] };
       }
       const silentMs = sess.silentMs + (ev.elapsedMs ?? TIMING.commandListenMs);
+      if (s.listenKind === 'grace' && ev.speech && !sess.graceRetried && !sess.closeRequested) {
+        // the mic picked up speech but made no words of it: give the late phrase one more chance
+        return listen(withSession(s, { silentMs, graceRetried: true }), 'grace', TIMING.graceListenMs);
+      }
       if (s.listenKind === 'list' && sess.continuing && !sess.closeRequested) {
         if (silentMs < TIMING.listPauseMs) return listen(withSession(s, { silentMs }), 'list', TIMING.commandListenMs);
         // a long pause after "and": stop reopening the mic (each start is an Android beep) until a tap
-        return { state: { ...withSession(s, { silentMs }), mode: 'paused', listenKind: null }, effects: [{ type: 'cue', kind: 'paused' }] };
+        return {
+          state: { ...withSession(s, { silentMs }), mode: 'paused', listenKind: null },
+          effects: [{ type: 'cue', kind: 'paused' }, { type: 'pauseTimer', id: s.listenId, ms: TIMING.pausedFinishMs }],
+        };
       }
       return chain((x) => closeList(x), maybeFinish)(withSession(s, { silentMs }));
     }
@@ -362,10 +406,13 @@ export function step(s, ev) {
       const sess = s.session;
       if (sess?.inFlight && ev.requestId === sess.inFlight.requestId) {
         const after = (x) => (x.review?.waiting ? askHeld(x) : maybeFinish(x));
-        return chain((x) => applyListResult(x, sess.inFlight, ev.result), pump, flushUndo, after)(s);
+        const key = sess.inFlight.requestId;
+        return chain((x) => applyListResult(x, sess.inFlight, ev.result), pump, (x) => settleCancelled(x, key), after)(s);
       }
       if (s.review?.current && ev.requestId === s.review.current.requestId) return applyAnswerResult(s, ev.result);
-      if (s.undo.inFlight && ev.requestId === s.undo.inFlight.requestId) return applyUndoResult(s, ev.result);
+      if (s.undo.inFlight && ev.requestId === s.undo.inFlight.requestId) {
+        return chain((x) => applyUndoResult(x, ev.result), (x) => (x.review?.waiting ? askHeld(x) : maybeFinish(x)))(s);
+      }
       return none;
     }
 
@@ -376,13 +423,19 @@ export function step(s, ev) {
     }
 
     case 'undo': {
-      if (s.undo.waiting || s.undo.inFlight || !s.undo.stack.length) return none; // busy or nothing of this session left
-      // instant feedback; never speak while the mic is open (it would hear "undo")
+      const top = undoTop(s);
+      if (s.undo.waiting || s.undo.inFlight || !top) return none; // busy or nothing of this session left
+      // instant feedback; never make a sound while the mic is open (it would hear it)
       const cue = { type: 'cue', kind: 'undo', quiet: s.mode === 'listening' };
-      if (pendingChunks(s.session)) return { state: withUndo(s, { waiting: ev.requestId }), effects: [cue] };
-      const out = sendUndo(s, ev.requestId);
+      const st = s.session?.open ? withSession(s, { silentMs: 0 }) : s; // a tap is activity: the pause clock restarts
+      if (top.pending) return { state: withUndo(withEntry(st, top.key, { cancelled: true }), { waiting: ev.requestId }), effects: [cue] };
+      const out = sendUndo(st, top, ev.requestId);
       return { state: out.state, effects: [cue, ...out.effects] };
     }
+
+    case 'pauseExpired': // paused a long while: finish the list (questions, then the read-back)
+      if (s.mode !== 'paused' || ev.id !== s.listenId) return none;
+      return chain((x) => closeList(x), maybeFinish)(s);
 
     case 'undoExpired':
       if (ev.epoch !== s.undo.epoch || s.undo.waiting || s.undo.inFlight) return none;

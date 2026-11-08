@@ -28,16 +28,16 @@ export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'pause
 
 /**
  * What to play for a cue under the given settings: {say, tones, vibrate}.
- * quiet: never speak (the mic is open and would hear it) — the voice style falls back to its tone.
+ * quiet: the mic is open and would hear any sound (it then restarts, beeping) — so only a buzz, in every style but silent.
  */
 export function cuePlan(kind, settings, { quiet = false } = {}) {
   const style = settings?.style ?? 'voice';
   const plan = { say: null, tones: [], vibrate: null };
   if (style === 'silent') return plan;
-  if (style === 'vibrate') return { ...plan, vibrate: BUZZ[kind] ?? null };
+  if (style === 'vibrate' || quiet) return { ...plan, vibrate: kind === 'listening' && style !== 'vibrate' ? null : BUZZ[kind] ?? null };
   if (style === 'voice') {
-    if (SAY[kind] && !quiet) plan.say = SAY[kind];
-    else if (kind === 'problem' || SAY[kind]) plan.tones = GLIDES[kind] ?? []; // done/needsYou: the spoken words that follow say it
+    if (SAY[kind]) plan.say = SAY[kind];
+    else if (kind === 'problem') plan.tones = GLIDES[kind]; // done/needsYou: the spoken words that follow say it
   } else if (style === 'tones') {
     plan.tones = GLIDES[kind] ?? [];
   } else if (style === 'beeps') {
@@ -68,10 +68,11 @@ export function describeCue(kind, settings) {
 }
 
 /**
- * Plays cues. play() resolves when the tones and any spoken word have finished, so the mic never hears them.
+ * Plays cues. play() resolves when the tones and any spoken word have finished (plus a short tail after speech),
+ * so the mic never hears them.
  * @param speak  (text) => Promise — WISP's speech (voice.speak)
  */
-export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve() }) {
+export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve(), tailMs = 200 }) {
   let ctx = null;
   function tones(list) {
     if (!list.length) return Promise.resolve();
@@ -107,7 +108,8 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
       if (plan.vibrate && win.navigator?.vibrate) {
         try { win.navigator.vibrate(plan.vibrate); } catch { /* not allowed */ }
       }
-      return Promise.all([tones(plan.tones), plan.say ? speak(plan.say) : Promise.resolve()]).then(() => {});
+      const said = plan.say ? speak(plan.say).then(() => new Promise((r) => setTimeout(r, tailMs))) : Promise.resolve();
+      return Promise.all([tones(plan.tones), said]).then(() => {});
     },
   };
 }

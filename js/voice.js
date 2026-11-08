@@ -34,7 +34,8 @@ export function createVoice({ win = window, log = () => {}, onInterim = () => {}
 
   /**
    * Listen for one utterance.
-   * @returns {Promise<{type:"heard", text}|{type:"silence"}|{type:"error", error}>}
+   * @returns {Promise<{type:"heard", text}|{type:"silence", speech}|{type:"error", error}>}
+   * speech: the recogniser noticed someone talking but made no words of it.
    * Gives up with "silence" if no speech *starts* within timeoutMs.
    */
   function listen({ timeoutMs }) {
@@ -63,7 +64,7 @@ export function createVoice({ win = window, log = () => {}, onInterim = () => {}
         if (started) return;
         log('listen: no speech, giving up');
         try { r.abort(); } catch { /* already stopped */ }
-        done({ type: 'silence' });
+        done({ type: 'silence', speech: false });
       }, timeoutMs);
       r.onspeechstart = () => {
         started = true;
@@ -79,10 +80,10 @@ export function createVoice({ win = window, log = () => {}, onInterim = () => {}
       };
       r.onerror = (e) => {
         log(`recognition error: ${e.error}`);
-        if (e.error === 'no-speech' || e.error === 'aborted') done({ type: 'silence' });
+        if (e.error === 'no-speech' || e.error === 'aborted' || e.error === 'no-match') done({ type: 'silence', speech: started });
         else done({ type: 'error', error: e.error });
       };
-      r.onend = () => done(finalText.trim() ? { type: 'heard', text: finalText.trim() } : { type: 'silence' });
+      r.onend = () => done(finalText.trim() ? { type: 'heard', text: finalText.trim() } : { type: 'silence', speech: started });
       try {
         r.start();
         log(`listening (${timeoutMs} ms)`);

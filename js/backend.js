@@ -41,10 +41,13 @@ export function createBackend({ url, getToken, fetchFn, timeoutMs, user = 'phone
     /** One chunk of a spoken list; `location` is the place carried from earlier chunks (or null). */
     list: (transcript, location, requestId) => post({ transcript, list: { location: location ?? null }, request_id: requestId }),
     answer: (transcript, pending, clarify, requestId) => post({ transcript, pending, clarify, request_id: requestId }),
-    /** Undo exactly one saved transaction (ADR-010). There is deliberately no untargeted undo from the app. */
-    undo: (requestId, txnId) => (txnId
-      ? post({ actions: [{ intent: 'undo', txn_id: txnId }], request_id: requestId })
-      : Promise.resolve({ kind: 'server', error: 'no_txn', data: { reply: "There's nothing to undo." } })),
+    /** Undo exactly these saved transactions, all or none (ADR-010). There is deliberately no untargeted undo from the app. */
+    undo: (requestId, txnIds) => {
+      const ids = (Array.isArray(txnIds) ? txnIds : [txnIds]).filter(Boolean);
+      return ids.length
+        ? post({ actions: ids.map((id) => ({ intent: 'undo', txn_id: id })), request_id: requestId })
+        : Promise.resolve({ kind: 'server', error: 'no_txn', data: { reply: "There's nothing to undo." } });
+    },
     /** Harmless check that the token works (dry-run query: writes nothing). */
     check: () => post({ dry_run: true, actions: [{ intent: 'query', query: { scope: 'all' } }] }),
   };
