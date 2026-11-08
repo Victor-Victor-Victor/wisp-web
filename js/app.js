@@ -3,7 +3,7 @@
 import { APP_VERSION, BACKEND_URL, TIMING } from './config.js';
 import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
-import { createCuePlayer, CUE_GUIDE, describeCue } from './cues.js';
+import { createCuePlayer, CUE_GUIDE, describeCue, CLIP_FILES } from './cues.js';
 import { createSettings, timingFor } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
@@ -36,7 +36,7 @@ const backend = createBackend({
 });
 const queue = createQueue(indexedDbStore(window.indexedDB));
 const voice = createVoice({ log, onInterim: (t) => { ui.transcript.textContent = t; } });
-const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs });
+const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES });
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
 // ---------- dialog loop ----------

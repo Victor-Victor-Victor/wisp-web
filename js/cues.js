@@ -23,6 +23,10 @@ const BUZZ = {
   listening: [30], heard: [40], done: [30, 60, 30], needsYou: [40, 80, 40], problem: [300], undo: [30, 50, 30, 50, 30], paused: [300],
 };
 const SAY = { heard: 'Okay.', undo: 'Undone.', paused: 'Paused. Tap the mic to go on.' };
+// Recorded words (web/audio, made by scripts/make-voice-clips.mjs): they start at once, where Android's speech engine
+// takes ~0.5 s to start. If a clip isn't loaded (or audio isn't allowed yet), the words are spoken instead.
+const CLIP = { heard: 'okay', undo: 'undone' };
+export const CLIP_FILES = { okay: 'audio/okay.wav', undone: 'audio/undone.wav' };
 
 export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'paused'];
 
@@ -33,11 +37,14 @@ export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'pause
  */
 export function cuePlan(kind, settings, { quiet = false } = {}) {
   const style = settings?.style ?? 'voice';
-  const plan = { say: null, tones: [], vibrate: null };
+  const plan = { say: null, clip: null, tones: [], vibrate: null };
   if (style === 'silent' || quiet) return plan;
   if (style === 'vibrate') return { ...plan, vibrate: BUZZ[kind] ?? null };
   if (style === 'voice') {
-    if (SAY[kind]) plan.say = SAY[kind];
+    if (SAY[kind]) {
+      plan.say = SAY[kind];
+      plan.clip = CLIP[kind] ?? null;
+    }
     else if (kind === 'problem') plan.tones = GLIDES[kind]; // done/needsYou: the spoken words that follow say it
   } else if (style === 'tones') {
     plan.tones = GLIDES[kind] ?? [];
@@ -72,14 +79,47 @@ export function describeCue(kind, settings) {
  * Plays cues. play() resolves when the tones and any spoken word have finished (plus a short tail after speech),
  * so the mic never hears them.
  * @param speak  (text) => Promise — WISP's speech (voice.speak)
+ * @param clips  {name: url} recorded words to preload (CLIP_FILES)
  */
-export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve(), tailMs = 200 }) {
+export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve(), tailMs = 200, clips = {} }) {
   let ctx = null;
+  const buffers = {};
+  function audio() {
+    ctx ??= new win.AudioContext();
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    return ctx;
+  }
+  // decode the clips once (decoding works even before the first tap allows sound)
+  if (win.AudioContext && win.fetch) {
+    for (const [name, url] of Object.entries(clips)) {
+      win.fetch(url)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((data) => audio().decodeAudioData(data))
+        .then((buf) => { buffers[name] = buf; })
+        .catch((e) => log(`clip ${name} not loaded: ${e.message ?? e}`));
+    }
+  }
+  /** Play a recorded word; false if it can't play right now (then it's spoken instead). */
+  function clip(name) {
+    const buf = buffers[name];
+    if (!buf) return null;
+    try {
+      const c = audio();
+      if (c.state !== 'running') return null;
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.connect(c.destination);
+      src.start();
+      return new Promise((r) => setTimeout(r, Math.round(buf.duration * 1000) + tailMs));
+    } catch (e) {
+      log(`clip error: ${e.name}`);
+      return null;
+    }
+  }
   function tones(list) {
     if (!list.length) return Promise.resolve();
     try {
-      ctx ??= new win.AudioContext();
-      if (ctx.state !== 'running') ctx.resume().catch(() => {});
+      audio();
       if (ctx.state !== 'running') return Promise.resolve();
       const t = ctx.currentTime + 0.01;
       let end = 0;
@@ -109,7 +149,8 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
       if (plan.vibrate && win.navigator?.vibrate) {
         try { win.navigator.vibrate(plan.vibrate); } catch { /* not allowed */ }
       }
-      const said = plan.say ? speak(plan.say).then(() => new Promise((r) => setTimeout(r, tailMs))) : Promise.resolve();
+      const fromClip = plan.clip ? clip(plan.clip) : null;
+      const said = fromClip ?? (plan.say ? speak(plan.say).then(() => new Promise((r) => setTimeout(r, tailMs))) : Promise.resolve());
       return Promise.all([tones(plan.tones), said]).then(() => {});
     },
   };
