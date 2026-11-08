@@ -6,7 +6,7 @@ const KEY = 'wisp.settings';
 export const CUE_STYLES = ['voice', 'tones', 'beeps', 'vibrate', 'silent'];
 export const PAUSE_CHOICES = [10, 15, 20, 30]; // seconds
 export const FINISH_CHOICES = [15, 30, 60]; // seconds
-export const WORD_CHOICES = ['okay', 'kay']; // the Voice style's word: "Okay." or a quicker, low "Kay."
+export const WORD_CHOICES = ['okay', 'kay']; // the Voice style's word: "Okay." or a quicker one-syllable "Kay."
 export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30, word: 'okay' });
 const FROM_OLD_SOUNDS = { full: 'voice', minimal: 'beeps', off: 'silent' }; // 0.4.x settings
 
