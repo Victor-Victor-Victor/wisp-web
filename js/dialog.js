@@ -317,9 +317,10 @@ function applyAnswerResult(s, r) {
  * @param ev  {type:"start"} | {type:"heard", id, text, requestId} | {type:"silence", id, elapsedMs?, speech?}
  *            | {type:"response", requestId, result} | {type:"spoken", id} | {type:"undo", requestId}
  *            | {type:"undoExpired", epoch} | {type:"pauseExpired", id} | {type:"cancel"}
+ * @param t   timings (config TIMING, with the person's ⚙ choices for listPauseMs / pausedFinishMs)
  * @returns {{state, effects: object[]}}
  */
-export function step(s, ev) {
+export function step(s, ev, t = TIMING) {
   const none = { state: s, effects: [] };
   switch (ev.type) {
     case 'start': {
@@ -328,13 +329,13 @@ export function step(s, ev) {
         const st = s.session?.open ? withSession(s, { closeRequested: true }) : s;
         return { state: st, effects: [{ type: 'stopListening' }] };
       }
-      if (s.mode === 'paused') return listen(withSession(s, { silentMs: 0, continuing: true }), 'list', TIMING.commandListenMs);
+      if (s.mode === 'paused') return listen(withSession(s, { silentMs: 0, continuing: true }), 'list', t.commandListenMs);
       if (s.session && !s.session.open && s.mode !== 'speaking') return none; // finishing up: ignore
       const pre = s.mode === 'speaking' ? [{ type: 'cancelSpeech' }] : [];
       const unasked = s.review ? s.session.held.slice(s.review.index) : [];
       if (unasked.length) pre.push({ type: 'attention', items: unasked }); // interrupted the questions: keep them
       const fresh = { ...s, review: null, session: newSession(s.session?.location ?? s.lastLocation), undo: freshUndo(s.undo.epoch + 1) };
-      const l = listen(fresh, 'list', TIMING.commandListenMs);
+      const l = listen(fresh, 'list', t.commandListenMs);
       return { state: l.state, effects: [...pre, { type: 'clearItems' }, ...l.effects] };
     }
 
@@ -373,8 +374,8 @@ export function step(s, ev) {
       const sent = pump(withSession(st, { continuing: c.continues }));
       const ack = c.text ? [{ type: 'cue', kind: 'heard' }] : [];
       const l = c.continues
-        ? listen(sent.state, 'list', TIMING.commandListenMs)
-        : listen(sent.state, 'grace', TIMING.graceListenMs); // a dropped or late "and" still continues the list
+        ? listen(sent.state, 'list', t.commandListenMs)
+        : listen(sent.state, 'grace', t.graceListenMs); // a dropped or late "and" still continues the list
       return { state: l.state, effects: [...shown, ...sent.effects, ...ack, ...l.effects] };
     }
 
@@ -386,17 +387,19 @@ export function step(s, ev) {
         // nothing said at launch → quietly idle
         return { state: { ...s, mode: 'idle', listenKind: null, session: null, lastLocation: sess?.location ?? s.lastLocation }, effects: [] };
       }
-      const silentMs = sess.silentMs + (ev.elapsedMs ?? TIMING.commandListenMs);
+      const silentMs = sess.silentMs + (ev.elapsedMs ?? t.commandListenMs);
       if (s.listenKind === 'grace' && ev.speech && !sess.graceRetried && !sess.closeRequested) {
         // the mic picked up speech but made no words of it: give the late phrase one more chance
-        return listen(withSession(s, { silentMs, graceRetried: true }), 'grace', TIMING.graceListenMs);
+        return listen(withSession(s, { silentMs, graceRetried: true }), 'grace', t.graceListenMs);
       }
       if (s.listenKind === 'list' && sess.continuing && !sess.closeRequested) {
-        if (silentMs < TIMING.listPauseMs) return listen(withSession(s, { silentMs }), 'list', TIMING.commandListenMs);
+        const left = t.listPauseMs - silentMs;
+        // listen only for what's left of the pause time (a last restart for under 2 s isn't worth an Android beep)
+        if (left >= 2000) return listen(withSession(s, { silentMs }), 'list', Math.min(t.commandListenMs, left));
         // a long pause after "and": stop reopening the mic (each start is an Android beep) until a tap
         return {
           state: { ...withSession(s, { silentMs }), mode: 'paused', listenKind: null },
-          effects: [{ type: 'cue', kind: 'paused' }, { type: 'pauseTimer', id: s.listenId, ms: TIMING.pausedFinishMs }],
+          effects: [{ type: 'cue', kind: 'paused' }, { type: 'pauseTimer', id: s.listenId, ms: t.pausedFinishMs }],
         };
       }
       return chain((x) => closeList(x), maybeFinish)(withSession(s, { silentMs }));
@@ -418,7 +421,7 @@ export function step(s, ev) {
 
     case 'spoken': {
       if (s.mode !== 'speaking' || ev.id !== s.speakId) return none;
-      if (s.after === 'answer' && s.review) return listen({ ...s, review: { ...s.review, current: null } }, 'answer', TIMING.answerListenMs);
+      if (s.after === 'answer' && s.review) return listen({ ...s, review: { ...s.review, current: null } }, 'answer', t.answerListenMs);
       return { state: { ...s, mode: 'idle', after: null, session: null }, effects: [] };
     }
 

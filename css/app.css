@@ -113,6 +113,8 @@ main { max-width: 640px; margin: 0 auto; }
 .choices legend { color: var(--muted); margin-bottom: 6px; }
 .choices label, .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 17px; }
 .choices input, .toggle input { width: 22px; height: 22px; accent-color: var(--teal); }
+.pick { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; font-size: 17px; }
+.pick select { font: inherit; min-height: 40px; padding: 4px 8px; border-radius: 8px; }
 .undo:disabled { opacity: 0.6; }
 .guide, .howto { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 16px; }
 .guide li { display: flex; gap: 10px; align-items: center; }

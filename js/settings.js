@@ -1,16 +1,30 @@
 // Per-phone preferences (localStorage). Cue style (ADR-010): voice (default — a spoken "Okay" per phrase), tones
 // (speech-shaped glides), beeps (high/low), vibrate (buzzes only), silent (visual only). Spoken questions and the
 // end-of-list read-back always speak. "Also vibrate" adds buzzes to voice, tones or beeps.
+// Timing: how long a silence after "and" pauses the list, and how long a paused list waits before it's finished.
 const KEY = 'wisp.settings';
 export const CUE_STYLES = ['voice', 'tones', 'beeps', 'vibrate', 'silent'];
-export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false });
+export const PAUSE_CHOICES = [10, 15, 20, 30]; // seconds
+export const FINISH_CHOICES = [15, 30, 60]; // seconds
+export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30 });
 const FROM_OLD_SOUNDS = { full: 'voice', minimal: 'beeps', off: 'silent' }; // 0.4.x settings
 
 function clean(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
   let style = CUE_STYLES.includes(s.style) ? s.style : null;
   if (!style && s.sounds in FROM_OLD_SOUNDS) style = s.sounds === 'off' && s.vibrate === true ? 'vibrate' : FROM_OLD_SOUNDS[s.sounds];
-  return { style: style ?? DEFAULTS.style, vibrate: s.vibrate === true };
+  const pick = (v, choices, d) => (choices.includes(Number(v)) ? Number(v) : d);
+  return {
+    style: style ?? DEFAULTS.style,
+    vibrate: s.vibrate === true,
+    pauseS: pick(s.pauseS, PAUSE_CHOICES, DEFAULTS.pauseS),
+    finishS: pick(s.finishS, FINISH_CHOICES, DEFAULTS.finishS),
+  };
+}
+
+/** The dialog's timings with this phone's choices applied. */
+export function timingFor(base, settings) {
+  return { ...base, listPauseMs: settings.pauseS * 1000, pausedFinishMs: settings.finishS * 1000 };
 }
 
 export function createSettings(storage) {

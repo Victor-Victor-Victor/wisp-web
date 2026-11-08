@@ -28,13 +28,14 @@ export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'pause
 
 /**
  * What to play for a cue under the given settings: {say, tones, vibrate}.
- * quiet: the mic is open and would hear any sound (it then restarts, beeping) — so only a buzz, in every style but silent.
+ * quiet: the mic is open and hears any sound — even the vibration motor — and then restarts with an Android beep, so
+ * nothing plays at all (the screen shows it).
  */
 export function cuePlan(kind, settings, { quiet = false } = {}) {
   const style = settings?.style ?? 'voice';
   const plan = { say: null, tones: [], vibrate: null };
-  if (style === 'silent') return plan;
-  if (style === 'vibrate' || quiet) return { ...plan, vibrate: kind === 'listening' && style !== 'vibrate' ? null : BUZZ[kind] ?? null };
+  if (style === 'silent' || quiet) return plan;
+  if (style === 'vibrate') return { ...plan, vibrate: BUZZ[kind] ?? null };
   if (style === 'voice') {
     if (SAY[kind]) plan.say = SAY[kind];
     else if (kind === 'problem') plan.tones = GLIDES[kind]; // done/needsYou: the spoken words that follow say it

@@ -4,7 +4,7 @@ import { APP_VERSION, BACKEND_URL, TIMING } from './config.js';
 import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
 import { createCuePlayer, CUE_GUIDE, describeCue } from './cues.js';
-import { createSettings } from './settings.js';
+import { createSettings, timingFor } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
@@ -16,7 +16,7 @@ const ui = {
   attentionList: $('attention-list'), setup: $('setup'), setupMsg: $('setup-msg'), tokenInput: $('token-input'),
   tokenSave: $('token-save'), gear: $('gear'), settings: $('settings'), vibrate: $('set-vibrate'),
   log: $('log'), copy: $('copy'), copyStatus: $('copy-status'),
-  guide: $('guide'), vibrateRow: $('vibrate-row'),
+  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'),
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -45,7 +45,7 @@ let reloadWhenIdle = false;
 let cueDone = Promise.resolve();
 
 function dispatch(ev) {
-  const out = step(state, ev);
+  const out = step(state, ev, timingFor(TIMING, settings.get()));
   if (out.state.mode !== state.mode) log(`${ev.type}: ${state.mode} → ${out.state.mode}`);
   state = out.state;
   render();
@@ -311,6 +311,8 @@ function renderSettings() {
   for (const input of document.querySelectorAll('input[name="style"]')) input.checked = input.value === s.style;
   ui.vibrate.checked = s.vibrate;
   ui.vibrateRow.hidden = s.style === 'vibrate' || s.style === 'silent';
+  ui.pauseS.value = String(s.pauseS);
+  ui.finishS.value = String(s.finishS);
   ui.guide.replaceChildren(...CUE_GUIDE.map((g) => {
     const li = document.createElement('li');
     const play = document.createElement('button');
@@ -336,6 +338,9 @@ for (const input of document.querySelectorAll('input[name="style"]')) {
     renderSettings();
     cues.play('heard'); // preview
   });
+}
+for (const [el, key] of [[ui.pauseS, 'pauseS'], [ui.finishS, 'finishS']]) {
+  el.addEventListener('change', () => { settings.set({ [key]: Number(el.value) }); renderSettings(); });
 }
 ui.vibrate.addEventListener('change', () => {
   settings.set({ vibrate: ui.vibrate.checked });
@@ -369,7 +374,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.vibrate ? ' + vibrate' : ''}`,
+    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.vibrate ? ' + vibrate' : ''} | pause ${s.pauseS} s, finish ${s.finishS} s`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {

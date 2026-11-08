@@ -31,14 +31,22 @@
       </fieldset>
       <label class="toggle" id="vibrate-row"><input type="checkbox" id="set-vibrate"> Also vibrate</label>
 
+      <h2>Timing</h2>
+      <label class="pick">Pause the list after a silence of
+        <select id="set-pause"><option value="10">10 s</option><option value="15">15 s</option><option value="20">20 s</option><option value="30">30 s</option></select>
+      </label>
+      <label class="pick">Finish a paused list after
+        <select id="set-finish"><option value="15">15 s</option><option value="30">30 s</option><option value="60">60 s</option></select>
+      </label>
+
       <h2>Cue guide</h2>
       <ul id="guide" class="guide"></ul>
       <h2>How to talk to WISP</h2>
       <ul class="howto">
         <li>Say the place first: "In the garage freezer, a chicken breast, and…"</li>
-        <li>End each item with "and" when more is coming. Pause as long as you like — after a long pause the list pauses; tap the mic to go on.</li>
+        <li>End each item with "and" when more is coming. After a silence the list pauses (tap the mic to go on), and a while later it finishes by itself — both times are under Timing.</li>
         <li>Say "that's it" when you're done. WISP reads the list back and asks about anything it wasn't sure of.</li>
-        <li>Undo removes the newest item from this list, one per tap.</li>
+        <li>Undo removes the newest phrase of this list, one per tap. It's silent while WISP is listening, so the mic doesn't hear it.</li>
       </ul>
       <p class="hint">Android plays its own beep each time the mic opens. That means "listening", and WISP can't turn it off. Questions and the read-back are always spoken.</p>
     </section>
