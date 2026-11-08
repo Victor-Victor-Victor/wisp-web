@@ -1,5 +1,5 @@
 // WISP service worker. Bump CACHE_VERSION on every web deploy.
-const CACHE_VERSION = 'wisp-v8';
+const CACHE_VERSION = 'wisp-v9';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   './js/setup.js',
   './js/utterance.js',
   './audio/okay.wav',
+  './audio/kay.wav',
   './audio/undone.wav',
   './icons/icon-192.png',
   './icons/icon-512.png',

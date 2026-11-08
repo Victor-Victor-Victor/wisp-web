@@ -22,6 +22,7 @@ const POLITE = '(?:\\s+(?:for now|thanks|thank you))?';
 const END_ONLY = new RegExp(`^(?:(?:ok|okay|um+|uh+|and|so|yeah)[\\s,]+)*${END_PHRASE}${POLITE}[\\s.!…]*$`, 'i');
 const END_TAIL = new RegExp(`[\\s,.]+(?:and\\s+)?${END_PHRASE}${POLITE}[\\s.!…]*$`, 'i');
 const CANCEL_ONLY = /^(?:(?:oh|ok|okay|no|wait)[\s,]+)*(?:never ?mind|cancel(?: that| it| the list)?|forget it|forget that)[\s.!…]*$/i;
+const SKIP_ONLY = /^(?:(?:oh|ok|okay|um+|uh+|no|just|let'?s)[\s,]+)*(?:skip(?: it| that| this| this one| that one)?|pass|next|i don'?t know|no idea|not sure)[\s.!…]*$/i;
 const AND_TAIL = new RegExp(`[\\s,]+and${FILLER}[\\s,.…]*$`, 'i');
 const LEADING_AND = /^\s*and[\s,]+/i;
 const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
@@ -34,6 +35,11 @@ const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
  *  - "chunk": something to send; `continues` is true when it ended with "and…" (more is coming), `ends` when it
  *    closed the list in the same breath ("a loaf of bread and that's it").
  */
+/** An answer that skips just this question ("skip", "I don't know"); "never mind" skips them all. */
+export function isSkip(raw) {
+  return SKIP_ONLY.test(stripWakeWord(String(raw ?? '')).replace(/\s+/g, ' ').trim());
+}
+
 export function classifyUtterance(raw) {
   const text = stripWakeWord(String(raw ?? '')).replace(/\s+/g, ' ').trim();
   if (!text || END_ONLY.test(text)) return { kind: 'end' };

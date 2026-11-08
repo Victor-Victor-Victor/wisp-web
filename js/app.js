@@ -16,7 +16,7 @@ const ui = {
   attentionList: $('attention-list'), setup: $('setup'), setupMsg: $('setup-msg'), tokenInput: $('token-input'),
   tokenSave: $('token-save'), gear: $('gear'), settings: $('settings'), vibrate: $('set-vibrate'),
   log: $('log'), copy: $('copy'), copyStatus: $('copy-status'),
-  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'),
+  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), word: $('set-word'), wordRow: $('word-row'),
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -311,6 +311,8 @@ function renderSettings() {
   for (const input of document.querySelectorAll('input[name="style"]')) input.checked = input.value === s.style;
   ui.vibrate.checked = s.vibrate;
   ui.vibrateRow.hidden = s.style === 'vibrate' || s.style === 'silent';
+  ui.word.value = s.word;
+  ui.wordRow.hidden = s.style !== 'voice';
   ui.pauseS.value = String(s.pauseS);
   ui.finishS.value = String(s.finishS);
   ui.guide.replaceChildren(...CUE_GUIDE.map((g) => {
@@ -342,6 +344,11 @@ for (const input of document.querySelectorAll('input[name="style"]')) {
 for (const [el, key] of [[ui.pauseS, 'pauseS'], [ui.finishS, 'finishS']]) {
   el.addEventListener('change', () => { settings.set({ [key]: Number(el.value) }); renderSettings(); });
 }
+ui.word.addEventListener('change', () => {
+  settings.set({ word: ui.word.value });
+  renderSettings();
+  cues.play('heard'); // preview
+});
 ui.vibrate.addEventListener('change', () => {
   settings.set({ vibrate: ui.vibrate.checked });
   renderSettings();
@@ -374,7 +381,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.vibrate ? ' + vibrate' : ''} | pause ${s.pauseS} s, finish ${s.finishS} s`,
+    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | pause ${s.pauseS} s, finish ${s.finishS} s`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {

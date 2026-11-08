@@ -26,7 +26,7 @@ const SAY = { heard: 'Okay.', undo: 'Undone.', paused: 'Paused. Tap the mic to g
 // Recorded words (web/audio, made by scripts/make-voice-clips.mjs): they start at once, where Android's speech engine
 // takes ~0.5 s to start. If a clip isn't loaded (or audio isn't allowed yet), the words are spoken instead.
 const CLIP = { heard: 'okay', undo: 'undone' };
-export const CLIP_FILES = { okay: 'audio/okay.wav', undone: 'audio/undone.wav' };
+export const CLIP_FILES = { okay: 'audio/okay.wav', kay: 'audio/kay.wav', undone: 'audio/undone.wav' };
 
 export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'paused'];
 
@@ -41,9 +41,10 @@ export function cuePlan(kind, settings, { quiet = false } = {}) {
   if (style === 'silent' || quiet) return plan;
   if (style === 'vibrate') return { ...plan, vibrate: BUZZ[kind] ?? null };
   if (style === 'voice') {
+    const kay = kind === 'heard' && settings?.word === 'kay'; // ⚙ Voice word: the quicker one
     if (SAY[kind]) {
-      plan.say = SAY[kind];
-      plan.clip = CLIP[kind] ?? null;
+      plan.say = kay ? 'Kay.' : SAY[kind];
+      plan.clip = kay ? 'kay' : (CLIP[kind] ?? null);
     }
     else if (kind === 'problem') plan.tones = GLIDES[kind]; // done/needsYou: the spoken words that follow say it
   } else if (style === 'tones') {

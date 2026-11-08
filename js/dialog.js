@@ -13,7 +13,7 @@
 // soon as the phrase is heard (a tap while it's still saving waits for it). It never reaches anything older.
 // Every listen/speak/request has an id; events from a stale one are ignored.
 import { TIMING } from './config.js';
-import { classifyUtterance } from './utterance.js';
+import { classifyUtterance, isSkip } from './utterance.js';
 
 export const TEXT = {
   offline: "I couldn't reach the inventory. I saved this and will retry.",
@@ -25,6 +25,7 @@ export const TEXT = {
   okay: 'Okay.',
 };
 const READ_BACK_MAX = 6;
+const MAX_ASKS = 3; // times one held item may be asked before it's left out
 
 const freshUndo = (epoch = 0) => ({ stack: [], waiting: null, inFlight: null, epoch });
 
@@ -287,7 +288,11 @@ function applyAnswerResult(s, r) {
   const effects = [];
   if (r.kind === 'ok' && r.data.status === 'clarify') {
     // the engine needs one more thing about the same item: ask it next
-    const held = s.session.held.map((h, i) => (i === s.review.index ? { ...h, question: r.data.reply, pending: r.data.pending, clarify: r.data.clarify } : h));
+    const item = s.session.held[s.review.index];
+    const asks = (item.asks ?? 1) + 1;
+    // never loop on one item (phone test 0.5.3: "How much rice?" forever): after MAX_ASKS, leave it out
+    if (asks > MAX_ASKS) return nextHeld(s, { skipped: s.session.skipped + 1 });
+    const held = s.session.held.map((h, i) => (i === s.review.index ? { ...h, question: r.data.reply, pending: r.data.pending, clarify: r.data.clarify, asks } : h));
     return askHeld({ ...withSession(s, { held }), review: { ...s.review, current: null } });
   }
   let patch = {};
@@ -348,6 +353,7 @@ export function step(s, ev, t = TIMING) {
           const remaining = s.session.held.length - s.review.index;
           return askHeld({ ...withSession(s, { skipped: s.session.skipped + remaining }), review: { index: s.session.held.length, current: null, waiting: false } });
         }
+        if (isSkip(ev.text)) return nextHeld(s, { skipped: s.session.skipped + 1 });
         const item = s.session.held[s.review.index];
         const request = { kind: 'answer', transcript: String(ev.text).trim(), pending: item.pending, clarify: item.clarify, requestId: ev.requestId };
         return {
