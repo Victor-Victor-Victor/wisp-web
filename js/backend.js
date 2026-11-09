@@ -48,6 +48,8 @@ export function createBackend({ url, getToken, fetchFn, timeoutMs, user = 'phone
         ? post({ actions: ids.map((id) => ({ intent: 'undo', txn_id: id })), request_id: requestId })
         : Promise.resolve({ kind: 'server', error: 'no_txn', data: { reply: "There's nothing to undo." } });
     },
+    /** Read-only snapshot for the browse screens (ADR-011). */
+    view: () => post({ view: true }),
     /** Harmless check that the token works (dry-run query: writes nothing). */
     check: () => post({ dry_run: true, actions: [{ intent: 'query', query: { scope: 'all' } }] }),
   };

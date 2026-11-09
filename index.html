@@ -66,6 +66,7 @@
       </details>
     </section>
 
+    <div id="talk">
     <section class="voice">
       <button id="mic" class="mic idle" aria-label="Talk to WISP">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
@@ -94,6 +95,26 @@
       <button id="copy" class="btn">Copy report</button>
       <p id="copy-status" class="hint"></p>
     </details>
+    </div>
+
+    <section id="browse" class="browse" hidden>
+      <div class="browse-head">
+        <h2 id="browse-title"></h2>
+        <button id="refresh" class="btn small" aria-label="Refresh">↻</button>
+      </div>
+      <p id="browse-status" class="hint"></p>
+      <input id="search-box" class="search-box" type="search" placeholder="Search items, places, categories" aria-label="Search" autocomplete="off" hidden>
+      <div id="browse-body"></div>
+    </section>
+    <p id="toast" class="toast" role="status" hidden></p>
   </main>
+
+  <button id="fab-mic" class="fab" aria-label="Talk to WISP" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
+  <nav class="tabs" aria-label="Screens">
+    <a href="#" data-tab="talk"><span aria-hidden="true">🎙</span>Talk</a>
+    <a href="#places" data-tab="places"><span aria-hidden="true">🏠</span>Places</a>
+    <a href="#search" data-tab="search"><span aria-hidden="true">🔍</span>Search</a>
+    <a href="#recent" data-tab="recent"><span aria-hidden="true">🕘</span>Recent</a>
+  </nav>
 </body>
 </html>

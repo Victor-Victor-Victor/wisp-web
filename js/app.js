@@ -8,6 +8,8 @@ import { createSettings, timingFor } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
+import { routeOf, tabOf, search, createViewStore, relativeTime, placeContents, itemDetail } from './browse.js';
+import { renderPlaces, renderPlace, renderItem, renderSearchResults, renderRecent } from './screens.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -16,6 +18,9 @@ const ui = {
   attentionList: $('attention-list'), setup: $('setup'), setupMsg: $('setup-msg'), tokenInput: $('token-input'),
   tokenSave: $('token-save'), gear: $('gear'), settings: $('settings'), vibrate: $('set-vibrate'),
   log: $('log'), copy: $('copy'), copyStatus: $('copy-status'),
+  talk: $('talk'), browse: $('browse'), browseTitle: $('browse-title'), browseStatus: $('browse-status'),
+  browseBody: $('browse-body'), searchBox: $('search-box'), refresh: $('refresh'), fab: $('fab-mic'), toast: $('toast'),
+  tabs: [...document.querySelectorAll('.tabs a')],
   guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), word: $('set-word'), wordRow: $('word-row'),
 };
 
@@ -99,6 +104,7 @@ async function run(fx) {
         await queue.enqueue({ transcript: req.transcript, requestId: req.requestId, location: req.location });
         log('queued for retry');
       }
+      if (result.kind === 'ok') viewStale = true; // the browse screens refetch next time
       dispatch({ type: 'response', requestId: req.requestId, result });
       break;
     }
@@ -148,6 +154,7 @@ function render() {
   const busy = Boolean(state.session?.inFlight || state.session?.queue?.length || state.mode === 'working');
   ui.mic.className = `mic ${state.mode}${busy ? ' busy' : ''}`;
   ui.mic.setAttribute('aria-label', state.mode === 'listening' ? 'Done talking' : 'Talk to WISP');
+  ui.fab.className = `fab ${state.mode}`;
   const sess = state.session;
   const saved = sess?.applied?.filter((a) => a.kind === 'saved').length ?? 0;
   const toCheck = sess?.held?.length ?? 0;
@@ -213,7 +220,19 @@ function renderResults(data) {
       const where = document.createElement('span');
       where.className = 'where';
       where.textContent = r.location;
-      li.append(what, where);
+      const a = document.createElement('a'); // each answer row opens the item (ADR-011)
+      a.href = `#item/${encodeURIComponent(r.item_id)}`;
+      a.append(what, where);
+      li.append(a);
+      ui.results.append(li);
+    }
+    if (block?.scope === 'location' && block.rows?.[0]?.location_id) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.className = 'open-link';
+      a.href = `#place/${encodeURIComponent(block.rows[0].location_id)}`;
+      a.textContent = `Open ${block.rows[0].location} →`;
+      li.append(a);
       ui.results.append(li);
     }
   }
@@ -368,7 +387,7 @@ ui.undo.addEventListener('click', () => dispatch({ type: 'undo', requestId: newI
 function wake(reason) {
   log(`wake: ${reason}`);
   drainQueue();
-  if (tokenStore.get()) dispatch({ type: 'start' });
+  if (tokenStore.get() && route.screen === 'talk') dispatch({ type: 'start' }); // browsing: don't open the mic
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -403,8 +422,118 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// ---------- browse screens (ADR-011) ----------
+const viewStore = createViewStore(window.localStorage);
+let viewEntry = viewStore.load();
+let viewProblem = ''; // '' | 'offline' | 'error'
+let viewStale = true;
+let refreshing = false;
+let route = routeOf(window.location.hash);
+const TITLES = { places: 'Places', search: 'Search', recent: 'Recent changes' };
+const STALE_MS = 30000;
+
+async function refreshView({ force = false } = {}) {
+  if (!tokenStore.get() || refreshing) return;
+  const age = viewEntry ? Date.now() - new Date(viewEntry.fetched_at).getTime() : Infinity;
+  if (!force && !viewStale && age < STALE_MS) return;
+  refreshing = true;
+  renderBrowseStatus();
+  const t0 = performance.now();
+  const r = await backend.view();
+  refreshing = false;
+  log(`view → ${r.kind} in ${Math.round(performance.now() - t0)} ms`);
+  if (r.kind === 'ok') {
+    viewEntry = viewStore.save(r.data.view, r.data.fetched_at);
+    viewProblem = '';
+    viewStale = false;
+  } else {
+    viewProblem = r.kind === 'network' ? 'offline' : 'error';
+    if (r.kind === 'unauthorized') showSetup();
+  }
+  renderBrowse();
+}
+
+function renderBrowseStatus() {
+  const s = ui.browseStatus;
+  if (refreshing && !viewEntry) s.textContent = 'Loading…';
+  else if (refreshing) s.textContent = `Updated ${relativeTime(viewEntry.fetched_at)} · refreshing…`;
+  else if (viewProblem === 'offline') s.textContent = viewEntry ? 'Offline — showing the last copy' : "Offline — can't load the inventory";
+  else if (viewProblem === 'error') s.textContent = viewEntry ? "Couldn't refresh — showing the last copy" : "Couldn't load the inventory";
+  else s.textContent = viewEntry ? `Updated ${relativeTime(viewEntry.fetched_at)}` : '';
+}
+
+function renderBrowse() {
+  if (route.screen === 'talk') return;
+  renderBrowseStatus();
+  ui.searchBox.hidden = route.screen !== 'search';
+  const view = viewEntry?.view;
+  const now = new Date();
+  let title = TITLES[route.screen] ?? '';
+  if (view && route.screen === 'place') title = placeContents(view, route.id)?.place.name ?? 'Place';
+  if (view && route.screen === 'item') title = itemDetail(view, route.id)?.item.name ?? 'Item';
+  ui.browseTitle.textContent = title;
+  if (!view) {
+    ui.browseBody.replaceChildren();
+    return;
+  }
+  const body = {
+    places: () => renderPlaces(view),
+    place: () => renderPlace(view, route.id, now),
+    item: () => renderItem(view, route.id, now),
+    search: () => renderSearchResults(search(view, ui.searchBox.value), ui.searchBox.value),
+    recent: () => renderRecent(view, now, undoFromRecent),
+  }[route.screen];
+  ui.browseBody.replaceChildren(body());
+}
+
+function showRoute() {
+  const before = route;
+  route = routeOf(window.location.hash);
+  const talk = route.screen === 'talk';
+  ui.talk.hidden = !talk;
+  ui.browse.hidden = talk;
+  ui.fab.hidden = talk;
+  const tab = tabOf(route.screen);
+  for (const a of ui.tabs) a.classList.toggle('on', a.dataset.tab === tab);
+  if (talk) return;
+  renderBrowse();
+  if (before.screen !== route.screen || before.id !== route.id) window.scrollTo(0, 0);
+  refreshView();
+}
+
+let toastTimer = null;
+function toast(text) {
+  ui.toast.textContent = text;
+  ui.toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { ui.toast.hidden = true; }, 5000);
+}
+
+async function undoFromRecent(txnId, button) {
+  button.disabled = true;
+  button.textContent = 'Undoing…';
+  const r = await backend.undo(newId(), [txnId]);
+  log(`recent undo → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''}`);
+  let text = r.data?.reply || 'Something went wrong. Nothing was undone.';
+  if (r.kind === 'network') text = "I couldn't reach the inventory, so nothing was undone.";
+  toast(text);
+  viewStale = true;
+  await refreshView({ force: true });
+}
+
+window.addEventListener('hashchange', showRoute);
+ui.searchBox.addEventListener('input', () => renderBrowse());
+ui.refresh.addEventListener('click', () => refreshView({ force: true }));
+ui.fab.addEventListener('click', () => {
+  window.location.hash = '';
+  ui.mic.click();
+});
+
 // ---------- boot ----------
 ui.ver.textContent = APP_VERSION;
+if (route.screen !== 'talk') history.replaceState(null, '', window.location.pathname); // a launch always opens on Talk
+route = routeOf(window.location.hash);
+showRoute();
 renderAttention();
 renderSettings();
 log(`boot ${APP_VERSION}`);
