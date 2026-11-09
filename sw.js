@@ -1,5 +1,5 @@
 // WISP service worker. Bump CACHE_VERSION on every web deploy.
-const CACHE_VERSION = 'wisp-v15';
+const CACHE_VERSION = 'wisp-v16';
 const SHELL = [
   './',
   './index.html',
