@@ -541,7 +541,7 @@ async function undoFromRecent(txnId, button) {
 function serverTiming(r) {
   const t = r.data?.timing;
   if (!t) return '';
-  const parts = ['load', 'llm', 'engine', 'write'].filter((k) => t[k] != null).map((k) => `${k} ${Math.round(t[k])}`);
+  const parts = ['load', 'rules', 'llm', 'engine', 'write'].filter((k) => t[k] != null).map((k) => `${k} ${Math.round(t[k])}`);
   return ` (server ${Math.round(t.total ?? 0)}: ${parts.join(', ')}${t.cache ? `, cache ${t.cache}` : ''})`;
 }
 
