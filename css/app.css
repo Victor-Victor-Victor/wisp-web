@@ -214,3 +214,8 @@ details.pkgs summary { cursor: pointer; color: var(--muted); font-size: 16px; pa
 /* mic lab (app only) */
 .miclab { margin-top: 14px; border-top: 1px solid var(--surface-2); padding-top: 10px; }
 .miclab h3 { margin: 0 0 6px; font-size: 16px; color: var(--muted); }
+.lab-status { margin: 10px 0 4px; padding: 8px 12px; border-radius: 10px; background: var(--surface); font-size: 16px; font-weight: 600; }
+.lab-status.live { color: var(--bg); background: var(--teal); }
+.lab-heard { margin: 0 0 8px; min-height: 1.4em; font-size: 16px; }
+.btn.tapped { animation: tap 0.4s ease-out; }
+@keyframes tap { from { background: var(--teal); color: var(--bg); } to { background: var(--surface-2); color: var(--text); } }

@@ -16,7 +16,23 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
     s.value = value;
     return el('label', { className: 'pick' }, label, s);
   };
-  const btn = (text, onclick) => el('button', { className: 'btn small', type: 'button', textContent: text, onclick });
+  // every tap flashes the button, so you can see it went through
+  const btn = (text, fn) => el('button', {
+    className: 'btn small', type: 'button', textContent: text,
+    onclick: (e) => {
+      const b = e.currentTarget;
+      b.classList.remove('tapped');
+      void b.offsetWidth; // restart the flash
+      b.classList.add('tapped');
+      fn();
+    },
+  });
+  const status = el('p', { className: 'lab-status', textContent: 'Not listening.' });
+  const heard = el('p', { className: 'lab-heard', textContent: '' });
+  const show = (text, live = false) => {
+    status.textContent = text;
+    status.classList.toggle('live', live);
+  };
 
   let t0 = 0;
   let counts = null;
@@ -28,13 +44,25 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
     for (const h of handles) h?.remove?.();
     handles = [];
     const on = async (event, fn) => handles.push(await plugin.addListener(event, fn));
-    await on('ready', () => { counts.ready += 1; lab('mic ready (≈ beep)'); });
+    const live = () => counts && show(`Listening… ${counts.segments} phrases, ${counts.ready} mic starts`, true);
+    await on('ready', () => { if (counts) counts.ready += 1; lab('mic ready (≈ beep)'); live(); });
     await on('speechStart', () => lab('speech start'));
-    await on('partial', (d) => lab(`partial: ${d.text}`));
-    await on('segment', (d) => { counts.segments += 1; lab(`SEGMENT ${counts.segments}: "${d.text}"`); });
-    await on('error', (d) => { counts.errors.push(d.name); lab(`error ${d.code} ${d.name}`); });
-    await on('restart', (d) => { counts.restarts += 1; lab(`restart (${d.reason})`); });
-    await on('ended', (d) => { lab(`ended (${d.reason})`); summary(); });
+    await on('partial', (d) => { lab(`partial: ${d.text}`); heard.textContent = `… ${d.text}`; });
+    await on('segment', (d) => {
+      if (counts) counts.segments += 1;
+      lab(`SEGMENT ${counts?.segments ?? '?'}: "${d.text}"`);
+      heard.textContent = `Heard: “${d.text}”`;
+      live();
+    });
+    await on('error', (d) => { counts?.errors.push(d.name); lab(`error ${d.code} ${d.name}`); });
+    await on('restart', (d) => { if (counts) counts.restarts += 1; lab(`restart (${d.reason})`); });
+    await on('note', (d) => lab(`note: ${d.text}`));
+    await on('ended', (d) => {
+      lab(`ended (${d.reason})`);
+      const c = counts;
+      summary();
+      show(c ? `Stopped (${d.reason}): ${c.segments} phrases, ${c.ready} mic starts.` : `Stopped (${d.reason}).`);
+    });
   }
 
   function summary() {
@@ -49,10 +77,13 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
       const asked = await plugin.requestPermissions().catch(() => ({}));
       if (asked.microphone !== 'granted') {
         log('lab: microphone not allowed');
+        show('Microphone not allowed.');
         return;
       }
     }
     if (counts) await stop(true);
+    show('Starting…', true);
+    heard.textContent = '';
     counts = { segments: 0, ready: 0, restarts: 0, errors: [] };
     t0 = performance.now();
     await listenAll();
@@ -61,12 +92,17 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
       mode: root.querySelector('#lab-mode').value,
       engine: root.querySelector('#lab-engine').value,
       silenceMs: Number(root.querySelector('#lab-silence').value),
+      segmentBy: root.querySelector('#lab-segment').value,
+      muteBeep: root.querySelector('#lab-mute').value === 'on',
     };
     try {
       const r = await plugin.startSession(opts);
-      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms → got ${r.mode}${r.onDevice ? ' on-device' : ''}`);
+      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms/end by ${opts.segmentBy}/mute ${opts.muteBeep ? 'on' : 'off'}`
+        + ` → got ${r.mode}${r.onDevice ? ' on-device' : ' Google default'}`);
+      show(`Listening (${r.mode}${r.onDevice ? ', on this phone' : ', Google default'})… speak now.`, true);
     } catch (e) {
       lab(`start failed: ${e?.message ?? e}`);
+      show(`Could not start: ${e?.message ?? e}`);
       counts = null;
     }
   }
@@ -75,6 +111,7 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
     try {
       await (cancel ? plugin.cancelSession() : plugin.stopSession());
       lab(cancel ? 'cancel pressed' : 'stop pressed');
+      if (counts) show(cancel ? 'Cancelling…' : 'Stopping…');
     } catch (e) {
       lab(`stop failed: ${e?.message ?? e}`);
     }
@@ -86,12 +123,15 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
     pick('Mode', 'lab-mode', [['continuous', 'Continuous (one session)'], ['single', 'Single (phrase by phrase)']], 'continuous'),
     pick('Recognizer', 'lab-engine', [['auto', 'Auto'], ['device', 'On this phone'], ['default', 'Google default']], 'auto'),
     pick('Pause that ends a phrase', 'lab-silence', [['1000', '1 s'], ['1500', '1.5 s'], ['2000', '2 s']], '1500'),
+    pick('Continuous ends after', 'lab-segment', [['length', '10 minutes'], ['silence', '15 s of quiet']], 'length'),
+    pick('Mute the start beep', 'lab-mute', [['off', 'Off'], ['on', 'On']], 'off'),
     el('div', { className: 'actions' },
       btn('Start', start),
       btn('Play "Okay" clip', () => { lab('playing the Okay clip'); playOkay(); }),
       btn('Say "Okay" (phone voice)', () => { lab('phone voice says Okay'); sayOkay(); }),
       btn('Stop', () => stop(false)),
-      btn('Cancel', () => stop(true))));
+      btn('Cancel', () => stop(true))),
+    status, heard);
   root.replaceChildren(panel);
 
   plugin.capabilities?.().then((c) => log(`lab capabilities: sdk ${c.sdk}, available ${c.available}, on-device ${c.onDevice}, continuous ${c.continuous}, mic ${c.microphone}`))
