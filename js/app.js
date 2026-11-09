@@ -865,7 +865,7 @@ if (NATIVE && CAP?.Plugins?.WispSpeech) {
     plugin: CAP.Plugins.WispSpeech, log, root,
     sayOkay: () => voice.speak('Okay.'),
     playOkay: () => cues.play('heard', { settings: { style: 'voice', word: 'okay' } }),
-    playListening: () => cues.play('listening'),
+    playListening: () => cues.play('needsYou', { settings: { style: 'tones' } }), // lab stand-in for a start sound
   });
 }
 

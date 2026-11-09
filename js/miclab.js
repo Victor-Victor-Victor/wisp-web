@@ -38,6 +38,7 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
   let counts = null;
   let handles = [];
   let ownMic = false;
+  let phrases = [];
   const stamp = () => `${String(Math.round(performance.now() - t0)).padStart(6)}ms`;
   const lab = (msg) => log(`lab ${stamp()} ${msg}`);
 
@@ -54,11 +55,15 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
       live();
     });
     await on('speechStart', () => lab('speech start'));
-    await on('partial', (d) => { lab(`partial: ${d.text}`); heard.textContent = `… ${d.text}`; });
+    await on('partial', (d) => {
+      lab(`partial: ${d.text}`);
+      heard.textContent = [...phrases.map((p) => `• ${p}`), `… ${d.text.trim()}`].join('\n');
+    });
     await on('segment', (d) => {
       if (counts) counts.segments += 1;
-      lab(`SEGMENT ${counts?.segments ?? '?'}: "${d.text}"`);
-      heard.textContent = `Heard: “${d.text}”`;
+      lab(`SEGMENT ${counts?.segments ?? '?'}${d.via ? ` (${d.via})` : ''}: "${d.text}"`);
+      phrases.push(d.text);
+      heard.textContent = phrases.map((p) => `• ${p}`).join('\n');
       live();
     });
     await on('error', (d) => { counts?.errors.push(d.name); lab(`error ${d.code} ${d.name}`); });
@@ -91,6 +96,7 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
     if (counts) await stop(true);
     show('Starting…', true);
     heard.textContent = '';
+    phrases = [];
     counts = { segments: 0, ready: 0, restarts: 0, errors: [] };
     t0 = performance.now();
     await listenAll();
@@ -103,12 +109,13 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
       muteBeep: root.querySelector('#lab-mute').value === 'on',
       mic: root.querySelector('#lab-mic').value,
       echoCancel: root.querySelector('#lab-aec').value === 'on',
+      phraseEnd: root.querySelector('#lab-end').value,
     };
     ownMic = opts.mic === 'app';
     try {
       const r = await plugin.startSession(opts);
       ownMic = r.mic === 'app';
-      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms/end by ${opts.segmentBy}/mute ${opts.muteBeep ? 'on' : 'off'}/mic ${opts.mic}/echo ${opts.echoCancel ? 'on' : 'off'}`
+      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms/end by ${opts.segmentBy}/mute ${opts.muteBeep ? 'on' : 'off'}/mic ${opts.mic}/echo ${opts.echoCancel ? 'on' : 'off'}/phrase end ${opts.phraseEnd}`
         + ` → got ${r.mode}${r.onDevice ? ' on-device' : ' Google default'}, mic ${r.mic}${r.echoCancel ? ', echo cancel' : ''}`);
       show(`Listening (${r.mode}${r.onDevice ? ', on this phone' : ', Google default'})… speak now.`, true);
     } catch (e) {
@@ -132,7 +139,8 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
     el('h3', { textContent: 'Mic lab (app only)' }),
     el('p', { className: 'hint', textContent: 'Tests WISP\'s own microphone module by itself. Follow the steps Claude gave you; everything is logged above.' }),
     pick('Who opens the mic', 'lab-mic', [['app', 'WISP (own mic)'], ['recognizer', 'The recognizer']], 'app'),
-    pick('Echo cancel (own mic)', 'lab-aec', [['off', 'Off'], ['on', 'On']], 'off'),
+    pick('Echo cancel (own mic)', 'lab-aec', [['off', 'Off'], ['on', 'On']], 'on'),
+    pick('Phrase end (own mic)', 'lab-end', [['close', 'A: end input after the pause'], ['watch', 'B: watch the words']], 'close'),
     pick('Mode', 'lab-mode', [['continuous', 'Continuous (one session)'], ['single', 'Single (phrase by phrase)']], 'single'),
     pick('Recognizer', 'lab-engine', [['auto', 'Auto'], ['device', 'On this phone'], ['default', 'Google default']], 'device'),
     pick('Pause that ends a phrase', 'lab-silence', [['1000', '1 s'], ['1500', '1.5 s'], ['2000', '2 s']], '1500'),
