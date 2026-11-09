@@ -11,9 +11,11 @@
 // Server results make no sound mid-list: they show on screen, and anything that needs you waits for the review.
 // Undo (the button) reverses the newest *phrase* of this session — every item it saved, by txn_id — and is there as
 // soon as the phrase is heard (a tap while it's still saving waits for it). It never reaches anything older.
+// Spoken corrections (ADR-017): "no, I meant …" / "scratch that" mid-list takes back the newest phrase the same way;
+// at the end, "No" to "I heard: … Right?" asks "What did you mean?", and "No, ‹phrase›" replaces the item at once.
 // Every listen/speak/request has an id; events from a stale one are ignored.
 import { TIMING } from './config.js';
-import { classifyUtterance, isSkip } from './utterance.js';
+import { classifyUtterance, isSkip, parseNo, isYes } from './utterance.js';
 
 export const TEXT = {
   offline: "I couldn't reach the inventory. I saved this and will retry.",
@@ -23,6 +25,7 @@ export const TEXT = {
   undoOffline: "I couldn't reach the inventory, so nothing was undone.",
   undoQueued: "That one was saved for later because I couldn't reach the inventory, so it couldn't be undone.",
   okay: 'Okay.',
+  restate: 'Okay. What did you mean?',
 };
 const READ_BACK_MAX = 6;
 const MAX_ASKS = 3; // times one held item may be asked before it's left out
@@ -37,6 +40,7 @@ function newSession(location) {
   return {
     location, open: true, continuing: false, chunks: 0, silentMs: 0, graceRetried: false, queue: [], inFlight: null,
     applied: [], held: [], errors: [], replies: [], skipped: 0, undone: 0, cancelled: false, closeRequested: false, wasContinuing: false,
+    lastKey: null, lastLabel: null, // the newest phrase (a spoken correction takes it back)
   };
 }
 
@@ -186,7 +190,7 @@ const withEntry = (s, key, patch) => withUndo(s, { stack: s.undo.stack.map((e) =
 const withoutEntry = (s, key) => withUndo(s, { stack: s.undo.stack.filter((e) => e.key !== key) });
 
 function sendUndo(s, entry, requestId) {
-  const inFlight = { requestId, key: entry.key, txns: entry.txns, label: entry.label, dropped: entry.dropped ?? 0 };
+  const inFlight = { requestId, key: entry.key, txns: entry.txns, label: entry.label, dropped: entry.dropped ?? 0, replaced: Boolean(entry.replaced) };
   return {
     state: withUndo(s, { waiting: null, inFlight }),
     effects: [{ type: 'send', request: { kind: 'undo', txnIds: entry.txns, requestId } }],
@@ -202,25 +206,55 @@ function settleCancelled(s, key) {
   const entry = s.undo.stack.find((e) => e.key === key);
   if (!entry?.cancelled) return { state: s, effects: [] };
   if (entry.txns.length) return sendUndo(s, entry, s.undo.waiting);
-  const st = countUndone(withUndo(withoutEntry(s, key), { waiting: null }), entry.dropped ?? 0);
-  return { state: st, effects: entry.dropped ? [{ type: 'showItem', status: 'undo', text: `Undid: ${entry.label}` }] : [] };
+  const st = countUndone(withUndo(withoutEntry(s, key), { waiting: null }), entry.replaced ? 0 : entry.dropped ?? 0);
+  const shown = entry.dropped || entry.replaced;
+  return { state: st, effects: shown ? [{ type: 'showItem', status: 'undo', text: `${entry.replaced ? 'Replaced' : 'Undid'}: ${entry.label}` }] : [] };
 }
 
 function applyUndoResult(s, r) {
-  const { key, txns, label, dropped } = s.undo.inFlight;
+  const { key, txns, label, dropped, replaced } = s.undo.inFlight;
   let st = withUndo(s, { inFlight: null });
   const effects = [];
   const done = r.kind === 'ok' && (r.data.status === 'ok' || r.data.reply === "That's already undone.");
   if (done) {
-    st = countUndone(withoutEntry(st, key), txns.length + dropped);
+    // a correction's take-back isn't an "Undid one" in the read-back: the item is simply replaced
+    st = countUndone(withoutEntry(st, key), replaced ? 0 : txns.length + dropped);
     if (st.session) st = withSession(st, { applied: st.session.applied.map((a) => (txns.includes(a.txn_id) ? { ...a, undone: true } : a)) });
-    for (const txn of txns) effects.push({ type: 'showItem', status: 'undo', text: `Undid: ${label}`, txn });
+    for (const txn of txns) effects.push({ type: 'showItem', status: 'undo', text: `${replaced ? 'Replaced' : 'Undid'}: ${label}`, txn });
   } else {
     st = withEntry(st, key, { cancelled: false });
     const text = r.kind === 'network' ? TEXT.undoOffline : r.kind === 'ok' ? r.data.reply : TEXT.serverError;
     effects.push({ type: 'cue', kind: 'problem' }, { type: 'showItem', status: 'error', text });
   }
   return { state: st, effects };
+}
+
+/**
+ * A spoken correction ("no, I meant …", "scratch that"): take back the session's newest phrase — its saves (by
+ * txn_id, like the Undo button; a phrase still saving is undone when it lands) and its held questions.
+ */
+function correctLast(s, requestId) {
+  const sess = s.session;
+  const key = sess?.lastKey;
+  if (!key) return { state: s, effects: [] };
+  const label = sess.lastLabel;
+  const keptHeld = sess.held.filter((h) => h.from !== key);
+  const droppedHeld = sess.held.length - keptHeld.length;
+  let st = withSession(s, { lastKey: null, lastLabel: null, held: keptHeld });
+  const entry = st.undo.stack.find((e) => e.key === key);
+  if (entry && !st.undo.waiting && !st.undo.inFlight) {
+    st = withEntry(st, key, { replaced: true });
+    if (entry.pending) return { state: withUndo(withEntry(st, key, { cancelled: true }), { waiting: requestId }), effects: [] };
+    if (entry.txns.length) return sendUndo(st, { ...entry, replaced: true }, requestId);
+  }
+  return { state: st, effects: droppedHeld ? [{ type: 'showItem', status: 'undo', text: `Replaced: ${label}` }] : [] };
+}
+
+/** Where a held item was going (a correction at the end goes to the same place). */
+function heldPlace(s, item) {
+  const a = item?.pending?.actions?.[item?.clarify?.action_index ?? 0] ?? item?.pending?.actions?.[0];
+  const ref = a?.intent === 'move' ? a.to_location : a?.location;
+  return ref?.name ? ref : s.session.location ?? null;
 }
 
 // ---------- server results ----------
@@ -276,7 +310,7 @@ function applyListResult(s, chunk, r) {
       effects.push({ type: 'showItem', status: 'saved', text: capitalize(a.summary), txn: a.txn_id });
     }
     // a phrase Undo was tapped for: its questions are dropped, its saves undone (settleCancelled)
-    const held = entry?.cancelled ? [] : (d.held ?? []);
+    const held = entry?.cancelled ? [] : (d.held ?? []).map((h) => ({ ...h, from: chunk.requestId }));
     if (entry) {
       const dropped = entry.cancelled ? (d.held ?? []).length : 0;
       const patch = { txns, pending: false, dropped, label: whats.length ? joinList(whats) : entry.label };
@@ -327,6 +361,47 @@ function applyAnswerResult(s, r) {
   return { state: out.state, effects: [...effects, ...out.effects] };
 }
 
+/** The answer to a held question was a corrected phrase ("No, that's one box of crackers"), sent as a list phrase. */
+function applyReviewListResult(s, r) {
+  const current = s.review.current;
+  const item = s.session.held[s.review.index];
+  if (r.kind !== 'ok') {
+    const reply = r.kind === 'network' ? TEXT.offlineNoQueue : r.kind === 'unauthorized' ? TEXT.notSetUp : (r.data?.reply || TEXT.serverError);
+    const out = nextHeld(s, { errors: [...s.session.errors, { reply }] });
+    return { state: out.state, effects: [{ type: 'cue', kind: 'problem' }, ...(r.kind === 'unauthorized' ? [{ type: 'showSetup' }] : []), ...out.effects] };
+  }
+  const d = r.data;
+  const effects = [];
+  const sess = { ...s.session };
+  const place = d.location?.name ?? sess.location?.name ?? null;
+  const txns = [];
+  const whats = [];
+  for (const a of d.applied ?? []) {
+    if (a.kind !== 'saved') continue;
+    sess.applied = [...sess.applied, { ...a, place }];
+    if (a.txn_id) txns.push(a.txn_id);
+    whats.push(addParts(a.summary)?.what ?? a.summary);
+    effects.push({ type: 'showItem', status: 'saved', text: capitalize(a.summary), txn: a.txn_id });
+  }
+  for (const e of d.errors ?? []) effects.push({ type: 'showItem', status: 'error', text: stripNothing(e.reply) });
+  sess.errors = [...sess.errors, ...(d.errors ?? [])];
+  if (d.reply) sess.replies = [...sess.replies, d.reply];
+  let st = { ...s, session: sess };
+  if (txns.length) st = withUndo(st, { stack: [...st.undo.stack, { key: current.requestId, label: joinList(whats), txns, pending: false, cancelled: false }] });
+  const asks = (item?.asks ?? 1) + 1;
+  const fresh = (d.held ?? []).map((h) => ({ ...h, from: current.requestId, asks }));
+  if (fresh.length && asks <= MAX_ASKS) {
+    // the corrected phrase needs a question of its own: it takes the old one's place and is asked now
+    for (const h of fresh) effects.push({ type: 'showItem', status: 'held', text: h.question });
+    const all = sess.held;
+    const held = [...all.slice(0, s.review.index), ...fresh, ...all.slice(s.review.index + 1)];
+    const out = askHeld({ ...withSession(st, { held }), review: { ...s.review, current: null, restating: false } });
+    return { state: out.state, effects: [...effects, ...out.effects] };
+  }
+  const out = nextHeld(st, fresh.length ? { skipped: sess.skipped + 1 } : {});
+  return { state: out.state, effects: [...effects, ...out.effects] };
+}
+
 /**
  * @param s   current state
  * @param ev  {type:"start"} | {type:"heard", id, text, requestId} | {type:"silence", id, elapsedMs?, speech?}
@@ -365,22 +440,51 @@ export function step(s, ev, t = TIMING) {
         }
         if (isSkip(ev.text)) return nextHeld(s, { skipped: s.session.skipped + 1 });
         const item = s.session.held[s.review.index];
-        const request = { kind: 'answer', transcript: String(ev.text).trim(), pending: item.pending, clarify: item.clarify, requestId: ev.requestId };
+        const confirming = Boolean(item.clarify?.missing?.includes('confirm'));
+        const restating = Boolean(s.review.restating);
+        const no = restating ? (isYes(ev.text) ? null : { rest: String(ev.text).trim() }) : confirming ? parseNo(ev.text) : null;
+        if (no && !no.rest) {
+          // a plain "No": ask what was meant (counts as an ask, so it can't loop)
+          const asks = (item.asks ?? 1) + 1;
+          if (asks > MAX_ASKS) return nextHeld(s, { skipped: s.session.skipped + 1 });
+          const held = s.session.held.map((h, i) => (i === s.review.index ? { ...h, asks } : h));
+          const sp = speak({ ...withSession(s, { held }), review: { ...s.review, current: null, restating: true } }, TEXT.restate, 'answer');
+          return { state: sp.state, effects: [{ type: 'cue', kind: 'heard' }, ...sp.effects] };
+        }
+        if (no) {
+          // "No, that's one box of crackers": the corrected phrase replaces the item, in the same place
+          const request = { kind: 'list', transcript: no.rest, location: heldPlace(s, item), requestId: ev.requestId };
+          return {
+            state: { ...s, mode: 'working', listenKind: null, review: { ...s.review, current: request, restating: false } },
+            effects: [{ type: 'cue', kind: 'heard' }, { type: 'send', request }],
+          };
+        }
+        const transcript = restating ? 'yes' : String(ev.text).trim(); // changed their mind: "yes" after all
+        const request = { kind: 'answer', transcript, pending: item.pending, clarify: item.clarify, requestId: ev.requestId };
         return {
-          state: { ...s, mode: 'working', listenKind: null, review: { ...s.review, current: request } },
+          state: { ...s, mode: 'working', listenKind: null, review: { ...s.review, current: request, restating: false } },
           effects: [{ type: 'cue', kind: 'heard' }, { type: 'send', request }],
         };
       }
 
       // a list listen (first, after "and", or the grace listen after a phrase without "and")
       let st = withSession(s, { silentMs: 0, graceRetried: false });
-      if (c.kind === 'end') return chain((x) => closeList(x), maybeFinish)(st);
-      if (c.kind === 'cancel') return chain((x) => closeList(x, { cancelled: true, queue: [] }), maybeFinish)(st);
       const shown = [];
+      if (c.corrects) {
+        // "no, I meant …" / "scratch that": the newest phrase is taken back first (ADR-017)
+        const fix = correctLast(st, `${ev.requestId}-fix`);
+        st = fix.state;
+        shown.push(...fix.effects);
+      }
+      if (c.kind === 'end') {
+        const out = chain((x) => closeList(x), maybeFinish)(st);
+        return { state: out.state, effects: [...shown, ...out.effects] };
+      }
+      if (c.kind === 'cancel') return chain((x) => closeList(x, { cancelled: true, queue: [] }), maybeFinish)(st);
       const question = c.question && st.session.chunks === 0; // "what's in the garage freezer?": answer, don't list
       if (c.text) {
         const chunk = { kind: 'list', transcript: c.text, requestId: ev.requestId };
-        st = withSession(st, { queue: [...st.session.queue, chunk], chunks: st.session.chunks + 1 });
+        st = withSession(st, { queue: [...st.session.queue, chunk], chunks: st.session.chunks + 1, lastKey: ev.requestId, lastLabel: c.text });
         st = withUndo(st, { stack: [...st.undo.stack, { key: ev.requestId, label: c.text, txns: [], pending: true, cancelled: false }] });
         shown.push({ type: 'showItem', status: 'pending', text: c.text });
       }
@@ -389,7 +493,7 @@ export function step(s, ev, t = TIMING) {
         return { state: out.state, effects: [...shown, ...out.effects] };
       }
       const sent = pump(withSession(st, { continuing: c.continues, wasContinuing: Boolean(st.session.wasContinuing || c.continues) }));
-      const ack = c.text ? [{ type: 'cue', kind: 'heard' }] : [];
+      const ack = c.text || c.corrects ? [{ type: 'cue', kind: 'heard' }] : [];
       const l = c.continues
         ? listen(sent.state, 'list', t.commandListenMs)
         : listen(sent.state, 'grace', graceMs(sent.state, t)); // a dropped or late "and" still continues the list
@@ -429,7 +533,9 @@ export function step(s, ev, t = TIMING) {
         const key = sess.inFlight.requestId;
         return chain((x) => applyListResult(x, sess.inFlight, ev.result), pump, (x) => settleCancelled(x, key), after)(s);
       }
-      if (s.review?.current && ev.requestId === s.review.current.requestId) return applyAnswerResult(s, ev.result);
+      if (s.review?.current && ev.requestId === s.review.current.requestId) {
+        return s.review.current.kind === 'list' ? applyReviewListResult(s, ev.result) : applyAnswerResult(s, ev.result);
+      }
       if (s.undo.inFlight && ev.requestId === s.undo.inFlight.requestId) {
         return chain((x) => applyUndoResult(x, ev.result), (x) => (x.review?.waiting ? askHeld(x) : maybeFinish(x)))(s);
       }

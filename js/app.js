@@ -29,7 +29,7 @@ const ui = {
   tabs: [...document.querySelectorAll('.tabs a')],
   phoneData: $('phone-data'), phoneDataStatus: $('phone-data-status'), backupSave: $('backup-save'),
   backupRestore: $('backup-restore'), backupFile: $('backup-file'), phoneErase: $('phone-erase'),
-  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), graceS: $('set-grace'), word: $('set-word'), wordRow: $('word-row'),
+  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), graceS: $('set-grace'), word: $('set-word'), wordRow: $('word-row'), ack: $('set-ack'),
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -65,7 +65,8 @@ if (NATIVE) {
   try {
     const saved = JSON.parse(localStorage.getItem('wisp.settings') || '{}');
     if (!('data' in saved)) settings.set({ data: 'phone' });
-  } catch { settings.set({ data: 'phone' }); }
+    if (!('ack' in saved)) settings.set({ ack: 'buzz' }); // ADR-017: a light buzz after each phrase in the app
+  } catch { settings.set({ data: 'phone', ack: 'buzz' }); }
 }
 const sheetBackend = createBackend({
   url: BACKEND_URL, getToken: tokenStore.get, fetchFn: (...a) => fetch(...a), timeoutMs: TIMING.requestTimeoutMs,
@@ -89,7 +90,25 @@ const voice = NATIVE
     onOpen: () => cues.play('listening', { opening: true }), // WISP's own start sound (no Android beep)
   })
   : createVoice({ log, onInterim });
-const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES });
+/** The app's haptics (the Android WebView can't vibrate): a light tick, and buzz patterns as on/off steps. */
+function appHaptics(H) {
+  if (!H) return null;
+  const quiet = (p) => p?.catch?.(() => {});
+  return {
+    tick: () => quiet(H.impact({ style: 'LIGHT' })),
+    vibrate: (pattern) => {
+      let at = 0;
+      pattern.forEach((ms, i) => {
+        if (i % 2 === 0) setTimeout(() => quiet(H.vibrate({ duration: ms })), at);
+        at += ms;
+      });
+    },
+  };
+}
+const cues = createCuePlayer({
+  getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES,
+  haptics: NATIVE ? appHaptics(nativePlugin('Haptics')) : null,
+});
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
 // ---------- dialog loop ----------
@@ -382,7 +401,8 @@ function renderSettings() {
   ui.vibrate.checked = s.vibrate;
   ui.vibrateRow.hidden = s.style === 'vibrate' || s.style === 'silent';
   ui.word.value = s.word;
-  ui.wordRow.hidden = s.style !== 'voice';
+  ui.ack.value = s.ack;
+  ui.wordRow.hidden = s.style !== 'voice' || s.ack !== 'cue';
   ui.graceS.value = String(s.graceS);
   ui.pauseS.value = String(s.pauseS);
   ui.finishS.value = String(s.finishS);
@@ -498,6 +518,11 @@ ui.phoneErase.addEventListener('click', async () => {
   renderData();
 });
 
+ui.ack.addEventListener('change', () => {
+  settings.set({ ack: ui.ack.value });
+  renderSettings();
+  cues.play('heard'); // preview
+});
 ui.word.addEventListener('change', () => {
   settings.set({ word: ui.word.value });
   renderSettings();

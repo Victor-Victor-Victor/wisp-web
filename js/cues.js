@@ -21,6 +21,9 @@ const GLIDES = {
 const HIGH = [[1046, 1046, 0, 0.08]];
 const LOW = [[262, 262, 0, 0.16]];
 const OPENING = [[660, 880, 0, 0.09]]; // the app's mic just opened: a short, soft "bip" up
+const SOFT_TICK = [[1200, 1200, 0, 0.03]]; // ⚙ After each phrase: Soft tick (played at SOFT_GAIN)
+const SOFT_GAIN = 0.05;
+const LOUD_GAIN = 0.22;
 const BEEPS = { heard: HIGH, done: HIGH, needsYou: LOW, problem: LOW, undo: LOW, paused: LOW };
 const BUZZ = {
   listening: [30], heard: [40], done: [30, 60, 30], needsYou: [40, 80, 40], problem: [300], undo: [30, 50, 30, 50, 30], paused: [300],
@@ -41,7 +44,15 @@ export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'pause
 export function cuePlan(kind, settings, { quiet = false, opening = false } = {}) {
   const style = settings?.style ?? 'voice';
   const plan = { say: null, clip: null, tones: [], vibrate: null };
-  if (style === 'silent' || quiet) return plan;
+  if (quiet) return plan;
+  // ⚙ After each phrase (ADR-017): overrides the style for the per-phrase "heard" only
+  const ack = settings?.ack ?? 'cue';
+  if (kind === 'heard' && ack !== 'cue') {
+    if (ack === 'buzz') return { ...plan, haptic: 'tick' };
+    if (ack === 'soft') return { ...plan, tones: SOFT_TICK, gain: SOFT_GAIN };
+    return plan; // nothing
+  }
+  if (style === 'silent') return plan;
   if (kind === 'listening' && opening) {
     return style === 'vibrate' ? { ...plan, vibrate: BUZZ.listening } : { ...plan, tones: OPENING };
   }
@@ -76,8 +87,10 @@ export const CUE_GUIDE = [
 export function describeCue(kind, settings) {
   const p = cuePlan(kind, settings);
   const parts = [];
+  if (p.haptic) parts.push('light buzz');
   if (p.say) parts.push(`says “${p.say}”`);
-  if (p.tones.length) parts.push(settings.style === 'beeps' ? (p.tones[0][0] > 600 ? 'high beep' : 'low beep') : 'tone');
+  if (p.tones.length && p.gain) parts.push('soft tick');
+  else if (p.tones.length) parts.push(settings.style === 'beeps' ? (p.tones[0][0] > 600 ? 'high beep' : 'low beep') : 'tone');
   if (p.vibrate) parts.push(p.vibrate.length === 1 ? (p.vibrate[0] >= 200 ? 'long buzz' : 'short buzz') : `${Math.ceil(p.vibrate.length / 2)} short buzzes`);
   return parts.join(' + ') || (settings.style === 'voice' ? 'the next spoken words' : 'nothing (screen only)');
 }
@@ -87,8 +100,14 @@ export function describeCue(kind, settings) {
  * so the mic never hears them.
  * @param speak  (text) => Promise — WISP's speech (voice.speak)
  * @param clips  {name: url} recorded words to preload (CLIP_FILES)
+ * @param haptics {tick(), vibrate(pattern)} — the app passes the phone's haptics (the WebView can't vibrate);
+ *                the web uses navigator.vibrate
  */
-export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve(), tailMs = 200, clips = {} }) {
+export function createCuePlayer({ win = window, getSettings, log = () => {}, speak = () => Promise.resolve(), tailMs = 200, clips = {}, haptics = null }) {
+  const buzz = haptics ?? {
+    tick: () => win.navigator?.vibrate?.(15),
+    vibrate: (pattern) => win.navigator?.vibrate?.(pattern),
+  };
   let ctx = null;
   const buffers = {};
   function audio() {
@@ -123,7 +142,7 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
       return null;
     }
   }
-  function tones(list) {
+  function tones(list, peak = LOUD_GAIN) {
     if (!list.length) return Promise.resolve();
     try {
       audio();
@@ -137,7 +156,7 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
         osc.frequency.setValueAtTime(f0, t + at);
         if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(f1, t + at + dur);
         gain.gain.setValueAtTime(0.0001, t + at);
-        gain.gain.exponentialRampToValueAtTime(0.22, t + at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(peak, t + at + 0.012);
         gain.gain.exponentialRampToValueAtTime(0.0001, t + at + dur);
         osc.connect(gain).connect(ctx.destination);
         osc.start(t + at);
@@ -153,12 +172,13 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
   return {
     play(kind, { settings: override, quiet = false, opening = false } = {}) {
       const plan = cuePlan(kind, override ?? getSettings(), { quiet, opening });
-      if (plan.vibrate && win.navigator?.vibrate) {
-        try { win.navigator.vibrate(plan.vibrate); } catch { /* not allowed */ }
-      }
+      try {
+        if (plan.haptic) buzz.tick();
+        if (plan.vibrate) buzz.vibrate(plan.vibrate);
+      } catch { /* not allowed */ }
       const fromClip = plan.clip ? clip(plan.clip) : null;
       const said = fromClip ?? (plan.say ? speak(plan.say).then(() => new Promise((r) => setTimeout(r, tailMs))) : Promise.resolve());
-      return Promise.all([tones(plan.tones), said]).then(() => {});
+      return Promise.all([tones(plan.tones, plan.gain ?? LOUD_GAIN), said]).then(() => {});
     },
   };
 }

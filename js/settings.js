@@ -9,7 +9,10 @@ export const FINISH_CHOICES = [15, 30, 60]; // seconds
 export const DATA_CHOICES = ['sheet', 'phone']; // ADR-014: where the inventory lives
 export const GRACE_CHOICES = [1.5, 2, 3, 4]; // seconds WISP keeps listening after a phrase with no "and" (0.6.7)
 export const WORD_CHOICES = ['okay', 'kay']; // the Voice style's word: "Okay." or a quicker one-syllable "Kay."
-export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30, word: 'okay', graceS: 3, data: 'sheet' });
+// After each phrase (ADR-017): a light buzz, a soft tick, the cue style's own sound ("Okay", tone…), or nothing.
+// The app defaults to the buzz (a spoken "Okay" lands while people are still talking); the web keeps the cue style.
+export const ACK_CHOICES = ['buzz', 'soft', 'cue', 'none'];
+export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30, word: 'okay', graceS: 3, data: 'sheet', ack: 'cue' });
 const FROM_OLD_SOUNDS = { full: 'voice', minimal: 'beeps', off: 'silent' }; // 0.4.x settings
 
 function clean(raw) {
@@ -25,6 +28,7 @@ function clean(raw) {
     word: WORD_CHOICES.includes(s.word) ? s.word : DEFAULTS.word,
     graceS: pick(s.graceS, GRACE_CHOICES, DEFAULTS.graceS),
     data: DATA_CHOICES.includes(s.data) ? s.data : DEFAULTS.data,
+    ack: ACK_CHOICES.includes(s.ack) ? s.ack : DEFAULTS.ack,
   };
 }
 

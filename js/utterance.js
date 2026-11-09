@@ -31,6 +31,41 @@ const AND_TAIL = new RegExp(`[\\s,]+and${FILLER}[\\s,.…]*$`, 'i');
 const LEADING_AND = /^\s*and[\s,]+/i;
 const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
 
+// ---------- spoken corrections (ADR-017) ----------
+// "no, I meant a box of crackers", "no, a box of crackers", "scratch that", "make that two cans": the phrase before
+// is taken back and what follows replaces it. A bare "no" + a word that isn't an amount ("no salt crackers") is not a
+// correction, and "no more" stays "end of list".
+const AMOUNT_WORD = '(?:a|an|the|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|a couple|\\d+)';
+const SAID = "(?:i meant|i mean|i said|that'?s|that is|that was|it'?s|it is|it was|it should be|should be|make (?:that|it))";
+const NO_WORD = '(?:no|nope|nah)(?:[\\s,]+wait)?';
+const CORRECTION = new RegExp(
+  `^(?:(?:oh|oops|sorry|wait|um+|uh+)[\\s,]+)*(?:${NO_WORD}[\\s,]+${SAID}|${NO_WORD}(?=[\\s,]+${AMOUNT_WORD}\\b)`
+  + '|scratch that|i meant|i mean|correction|make (?:that|it)|change (?:that|it) to)(?=$|[\\s,.:;!])[\\s,.:;!]*',
+  'i',
+);
+const NO_ONLY = /^(?:(?:oh|um+|uh+|well)[\s,]+)*(?:no|nope|nah|not quite|wrong|that'?s wrong|no that'?s wrong|no thanks|no do not|no don'?t)[\s.!…]*$/i;
+const NO_THEN = new RegExp(`^(?:(?:oh|um+|uh+|well)[\\s,]+)*${NO_WORD}[\\s,]+(?:${SAID}[\\s,:]+)?`, 'i');
+const YES_ONLY = /^(?:(?:oh|um+|uh+|well)[\s,]+)*(?:yes|yeah|yep|yup|sure|ok|okay|right|correct|that'?s right)[\s.!…]*$/i;
+const tidy = (raw) => stripWakeWord(String(raw ?? '')).replace(/\s+/g, ' ').trim();
+
+/**
+ * An answer to "I heard: … Right?": not a "no" (null), a plain "no" ({rest: ''}), or a "no" that says what was meant
+ * ("no, that's one box of crackers" → {rest: 'one box of crackers'}).
+ */
+export function parseNo(raw) {
+  const text = tidy(raw);
+  if (NO_ONLY.test(text)) return { rest: '' };
+  const m = NO_THEN.exec(text) ?? CORRECTION.exec(text);
+  if (!m) return null;
+  const rest = text.slice(m[0].length).replace(/[\s.!…]+$/, '').trim();
+  return { rest };
+}
+
+/** "yes", "yeah", "right"… on its own. */
+export function isYes(raw) {
+  return YES_ONLY.test(tidy(raw));
+}
+
 /**
  * How a finished utterance moves a spoken list along.
  * @returns {{kind:"end"} | {kind:"cancel"} | {kind:"chunk", text:string, continues:boolean, ends?:true}}
@@ -49,6 +84,15 @@ export function classifyUtterance(raw) {
   if (!text || END_ONLY.test(text)) return { kind: 'end' };
   if (CANCEL_ONLY.test(text)) return { kind: 'cancel' };
   if (BARE_AND.test(text)) return { kind: 'chunk', text: '', continues: true }; // just "and…": keep listening
+  const fix = CORRECTION.exec(text);
+  if (fix) {
+    // a correction: the newest phrase is taken back (dialog.js), and what follows is a phrase like any other
+    const rest = text.slice(fix[0].length).trim();
+    if (!rest) return { kind: 'chunk', text: '', continues: true, corrects: true }; // "scratch that": keep listening
+    const c = classifyUtterance(rest);
+    if (c.kind === 'cancel') return c;
+    return { ...c, corrects: true };
+  }
   if (END_TAIL.test(text)) {
     const body = text.replace(END_TAIL, '').replace(LEADING_AND, '').trim();
     return body ? { kind: 'chunk', text: body, continues: false, ends: true } : { kind: 'end' };
