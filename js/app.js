@@ -3,6 +3,7 @@
 import { APP_VERSION, BACKEND_URL, TIMING } from './config.js';
 import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
+import { createNativeVoice } from './voice-native.js';
 import { createCuePlayer, CUE_GUIDE, describeCue, CLIP_FILES } from './cues.js';
 import { createSettings, timingFor } from './settings.js';
 import { createBackend, FRESH } from './backend.js';
@@ -56,6 +57,15 @@ function log(msg) {
 const tokenStore = createTokenStore(window.localStorage);
 const setupResult = consumeSetupHash(window.location, window.history, tokenStore);
 const settings = createSettings(window.localStorage);
+// Inside the Android app (Capacitor, ADR-015): native speech, no service worker, data on the phone by default.
+const CAP = window.Capacitor;
+const NATIVE = Boolean(CAP?.isNativePlatform?.());
+if (NATIVE) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('wisp.settings') || '{}');
+    if (!('data' in saved)) settings.set({ data: 'phone' });
+  } catch { settings.set({ data: 'phone' }); }
+}
 const sheetBackend = createBackend({
   url: BACKEND_URL, getToken: tokenStore.get, fetchFn: (...a) => fetch(...a), timeoutMs: TIMING.requestTimeoutMs,
 });
@@ -68,7 +78,13 @@ const backend = Object.fromEntries(['command', 'list', 'answer', 'undo', 'action
 /** Ready to talk: on the phone always; the Sheet needs the setup token. */
 const ready = () => onPhone() || Boolean(tokenStore.get());
 const queue = createQueue(indexedDbStore(window.indexedDB));
-const voice = createVoice({ log, onInterim: (t) => { ui.transcript.textContent = t; } });
+const onInterim = (t) => { ui.transcript.textContent = t; };
+const voice = NATIVE
+  ? createNativeVoice({
+    plugins: { SpeechRecognition: CAP.registerPlugin('SpeechRecognition'), TextToSpeech: CAP.registerPlugin('TextToSpeech') },
+    log, onInterim,
+  })
+  : createVoice({ log, onInterim });
 const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES });
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
@@ -515,7 +531,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | data: ${s.data} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | wait ${s.graceS} s, pause ${s.pauseS} s, finish ${s.finishS} s`,
+    `app: ${NATIVE ? 'android' : 'web'} | speech: ${NATIVE ? 'native' : 'web'} | display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | data: ${s.data} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | wait ${s.graceS} s, pause ${s.pauseS} s, finish ${s.finishS} s`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {
@@ -526,7 +542,7 @@ ui.copy.addEventListener('click', async () => {
   }
 });
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !NATIVE) { // the app's files are already on the phone
   navigator.serviceWorker.register('./sw.js').catch((e) => log(`service worker failed: ${e.message}`));
   let hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.addEventListener('controllerchange', () => {

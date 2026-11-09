@@ -9,6 +9,7 @@ const SHELL = [
   './js/config.js',
   './js/dialog.js',
   './js/voice.js',
+  './js/voice-native.js',
   './js/cues.js',
   './js/settings.js',
   './js/backend.js',
