@@ -3,7 +3,7 @@
 // beep), restarts, errors — and whether WISP's own "Okay" is heard by the open mic (echo). Everything goes into the
 // diagnostics log, so Copy report carries it.
 
-export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
+export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, root }) {
   const el = (tag, props = {}, ...kids) => {
     const n = document.createElement(tag);
     Object.assign(n, props);
@@ -37,6 +37,7 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
   let t0 = 0;
   let counts = null;
   let handles = [];
+  let ownMic = false;
   const stamp = () => `${String(Math.round(performance.now() - t0)).padStart(6)}ms`;
   const lab = (msg) => log(`lab ${stamp()} ${msg}`);
 
@@ -45,7 +46,13 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
     handles = [];
     const on = async (event, fn) => handles.push(await plugin.addListener(event, fn));
     const live = () => counts && show(`Listening… ${counts.segments} phrases, ${counts.ready} mic starts`, true);
-    await on('ready', () => { if (counts) counts.ready += 1; lab('mic ready (≈ beep)'); live(); });
+    await on('ready', () => {
+      if (!counts) return;
+      counts.ready += 1;
+      lab(`mic ready${ownMic ? '' : ' (≈ beep)'}`);
+      if (counts.ready === 1) playListening?.(); // WISP's own "go ahead" sound
+      live();
+    });
     await on('speechStart', () => lab('speech start'));
     await on('partial', (d) => { lab(`partial: ${d.text}`); heard.textContent = `… ${d.text}`; });
     await on('segment', (d) => {
@@ -94,11 +101,15 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
       silenceMs: Number(root.querySelector('#lab-silence').value),
       segmentBy: root.querySelector('#lab-segment').value,
       muteBeep: root.querySelector('#lab-mute').value === 'on',
+      mic: root.querySelector('#lab-mic').value,
+      echoCancel: root.querySelector('#lab-aec').value === 'on',
     };
+    ownMic = opts.mic === 'app';
     try {
       const r = await plugin.startSession(opts);
-      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms/end by ${opts.segmentBy}/mute ${opts.muteBeep ? 'on' : 'off'}`
-        + ` → got ${r.mode}${r.onDevice ? ' on-device' : ' Google default'}`);
+      ownMic = r.mic === 'app';
+      lab(`started: asked ${opts.mode}/${opts.engine}/${opts.silenceMs} ms/end by ${opts.segmentBy}/mute ${opts.muteBeep ? 'on' : 'off'}/mic ${opts.mic}/echo ${opts.echoCancel ? 'on' : 'off'}`
+        + ` → got ${r.mode}${r.onDevice ? ' on-device' : ' Google default'}, mic ${r.mic}${r.echoCancel ? ', echo cancel' : ''}`);
       show(`Listening (${r.mode}${r.onDevice ? ', on this phone' : ', Google default'})… speak now.`, true);
     } catch (e) {
       lab(`start failed: ${e?.message ?? e}`);
@@ -120,8 +131,10 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, root }) {
   const panel = el('div', { className: 'miclab' },
     el('h3', { textContent: 'Mic lab (app only)' }),
     el('p', { className: 'hint', textContent: 'Tests WISP\'s own microphone module by itself. Follow the steps Claude gave you; everything is logged above.' }),
-    pick('Mode', 'lab-mode', [['continuous', 'Continuous (one session)'], ['single', 'Single (phrase by phrase)']], 'continuous'),
-    pick('Recognizer', 'lab-engine', [['auto', 'Auto'], ['device', 'On this phone'], ['default', 'Google default']], 'auto'),
+    pick('Who opens the mic', 'lab-mic', [['app', 'WISP (own mic)'], ['recognizer', 'The recognizer']], 'app'),
+    pick('Echo cancel (own mic)', 'lab-aec', [['off', 'Off'], ['on', 'On']], 'off'),
+    pick('Mode', 'lab-mode', [['continuous', 'Continuous (one session)'], ['single', 'Single (phrase by phrase)']], 'single'),
+    pick('Recognizer', 'lab-engine', [['auto', 'Auto'], ['device', 'On this phone'], ['default', 'Google default']], 'device'),
     pick('Pause that ends a phrase', 'lab-silence', [['1000', '1 s'], ['1500', '1.5 s'], ['2000', '2 s']], '1500'),
     pick('Continuous ends after', 'lab-segment', [['length', '10 minutes'], ['silence', '15 s of quiet']], 'length'),
     pick('Mute the start beep', 'lab-mute', [['off', 'Off'], ['on', 'On']], 'off'),

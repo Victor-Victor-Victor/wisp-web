@@ -1,5 +1,5 @@
 // Public settings for the WISP phone app. Nothing secret here: this file is published to GitHub Pages.
-export const APP_VERSION = '0.7.4';
+export const APP_VERSION = '0.7.5';
 
 /** The Apps Script web app (backend/deployment.json — a test keeps them in sync). Requests need the token. */
 export const BACKEND_URL =
