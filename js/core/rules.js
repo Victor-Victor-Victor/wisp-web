@@ -105,10 +105,11 @@ function unitAt(t, i) {
  * Returns null for amounts it can't read with certainty (a unit without a number, a number without anything after).
  */
 function amountAt(t, i = 0) {
-  const n = numberAt(t, i);
+  let n = numberAt(t, i);
   if (!n) {
-    if (unitAt(t, i)) return null; // "bag of peas": no number — let the LLM decide
-    return { quantity: null, unit: null, package_count: null, next: i };
+    if (!unitAt(t, i)) return { quantity: null, unit: null, package_count: null, next: i };
+    if (!CTX.allowNew) return null; // "bag of peas": no number — the LLM decides (server)
+    n = { value: 1, next: i }; // phone: the mic often clips a leading "a" — "box of crackers" is one box (0.7.1)
   }
   let j = n.next;
   // "two 1-pound packages of ground beef": count × size
@@ -582,7 +583,12 @@ export function parseRules(state, { transcript, listLocation = null, list = fals
 function parsePhrase(state, transcript, listLocation, list) {
   const t = trimFiller(tokenize(transcript));
   if (list) {
-    const p = placeRefOf(state, PLACE_PREPS.has(t[0]) ? t.slice(1) : t);
+    // a place said alone: known places may be bare ("the pantry"); a new or partial one needs "in/on/at…" first,
+    // so a lone item word ("honey", its "a jar of" clipped by the mic) isn't taken for a new place (0.7.1)
+    const prep = PLACE_PREPS.has(t[0]);
+    const exact = placeOf(state, prep ? t.slice(1) : t);
+    if (exact) return { ...parsed([]), place: placeRef(exact.loc, exact.said) };
+    const p = prep ? placeRefOf(state, t.slice(1)) : null;
     if (p) return { ...parsed([]), place: p.ref };
   }
   const tries = [t];

@@ -31,11 +31,25 @@ const ui = {
 };
 
 // ---------- diagnostics log (never contains the token) ----------
-const logLines = [];
+// The last session's lines are kept, so closing and reopening WISP doesn't lose the report (0.7.1).
+const LOG_KEY = 'wisp.log';
+const logLines = (() => {
+  try {
+    const before = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+    return before.length ? [...before.slice(-200), `----- reopened ${new Date().toLocaleString()} -----`] : [];
+  } catch {
+    return [];
+  }
+})();
+let logSave = null;
 function log(msg) {
   logLines.push(`${String(Math.round(performance.now())).padStart(7)}ms  ${msg}`);
   if (logLines.length > 400) logLines.shift();
   ui.log.textContent = logLines.join('\n');
+  clearTimeout(logSave);
+  logSave = setTimeout(() => {
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(logLines.slice(-300))); } catch { /* ignore */ }
+  }, 400);
 }
 
 // ---------- services ----------
@@ -408,6 +422,8 @@ for (const input of document.querySelectorAll('input[name="data"]')) {
     if (!ready()) showSetup();
     notice(input.value === 'phone' ? 'WISP now keeps the inventory on this phone. The Google Sheet is left as it was.' : 'WISP now uses the Google Sheet again. The phone\'s inventory is kept for when you switch back.');
     await renderData();
+    renderBrowse(); // show the other inventory right away (0.7.1)
+    await refreshView({ force: true });
   });
 }
 ui.backupSave.addEventListener('click', async () => {

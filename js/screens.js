@@ -67,7 +67,9 @@ export function renderItem(view, id, now, act) {
     item.aliases.length ? `also called: ${item.aliases.join(', ')}` : '',
   ].filter(Boolean);
   return el('div', {},
-    el('p', { class: 'total', text: item.total ? `${item.total} in all` : 'None on hand' }),
+    el('div', { class: 'item-head' },
+      el('p', { class: 'total', text: item.total ? `${item.total} in all` : 'None on hand' }),
+      button('Edit item', () => act.edit('item', item), { class: 'btn small' })),
     el('p', { class: 'hint', text: facts.join(' · ') }),
     item.notes ? el('p', { class: 'hint', text: item.notes }) : null,
     item.stock.length ? null : el('p', { class: 'hint', text: `To add some, say it on Talk: "${item.name.toLowerCase()} in the pantry".` }),
@@ -81,13 +83,19 @@ export function renderItem(view, id, now, act) {
       return el('section', { class: 'group' },
         el('h3', {}, el('a', { href: `#place/${encodeURIComponent(p.place.id)}`, text: p.place.name }), el('span', { class: 'h-side', text: p.amount })),
         el('div', { class: 'actions' }, ...buttons, button('Move…', () => act.change('move', args))),
-        el('ul', { class: 'lots' }, ...p.lots.map((l) => el('li', {},
-          el('span', { class: 'row-main' },
-            el('span', { text: l.amount }),
-            el('span', { class: 'row-sub', text: `added ${relativeTime(l.added_at, now)}${l.added_by ? ` by ${l.added_by}` : ''}` })),
-          measured ? button('Used up', () => act.change('usedUp', { ...args, lotId: l.id }), { class: 'btn small' }) : null))));
-    }),
-    el('div', { class: 'actions end' }, button('Edit item', () => act.edit('item', item))));
+        // the packages (and when each was added) fold away: open when needed — "Used up" lives here (0.7.1)
+        p.lots.length ? el('details', { class: 'pkgs' },
+          el('summary', {
+            text: measured
+              ? `${p.lots.length} package${p.lots.length === 1 ? '' : 's'} · oldest ${shortDate(p.oldest, now)}`
+              : `Added ${p.lots.length === 1 ? 'once' : `${p.lots.length} times`} · first ${shortDate(p.oldest, now)}`,
+          }),
+          el('ul', { class: 'lots' }, ...p.lots.map((l) => el('li', {},
+            el('span', { class: 'row-main' },
+              el('span', { text: l.amount }),
+              el('span', { class: 'row-sub', text: `added ${relativeTime(l.added_at, now)}${l.added_by ? ` by ${l.added_by}` : ''}` })),
+            measured ? button('Used up', () => act.change('usedUp', { ...args, lotId: l.id }), { class: 'btn small' }) : null)))) : null);
+    }));
 }
 
 /** Recent changes, newest first; own changes get an Undo button (targeted, like the Talk screen's). */
