@@ -10,6 +10,7 @@ const SHELL = [
   './js/dialog.js',
   './js/voice.js',
   './js/voice-native.js',
+  './js/miclab.js',
   './js/cues.js',
   './js/settings.js',
   './js/backend.js',

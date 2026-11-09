@@ -4,6 +4,7 @@ import { APP_VERSION, BACKEND_URL, TIMING } from './config.js';
 import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
 import { createNativeVoice } from './voice-native.js';
+import { createMicLab } from './miclab.js';
 import { createCuePlayer, CUE_GUIDE, describeCue, CLIP_FILES } from './cues.js';
 import { createSettings, timingFor } from './settings.js';
 import { createBackend, FRESH } from './backend.js';
@@ -855,6 +856,17 @@ ui.fab.addEventListener('click', () => {
   window.location.hash = '';
   ui.mic.click();
 });
+
+// ---------- mic lab (Android app only, ADR-016) ----------
+if (NATIVE && CAP?.Plugins?.WispSpeech) {
+  const root = $('miclab');
+  root.hidden = false;
+  createMicLab({
+    plugin: CAP.Plugins.WispSpeech, log, root,
+    sayOkay: () => voice.speak('Okay.'),
+    playOkay: () => cues.play('heard', { settings: { style: 'voice', word: 'okay' } }),
+  });
+}
 
 // ---------- boot ----------
 ui.ver.textContent = APP_VERSION;
