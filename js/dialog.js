@@ -36,7 +36,7 @@ export function initialState() {
 function newSession(location) {
   return {
     location, open: true, continuing: false, chunks: 0, silentMs: 0, graceRetried: false, queue: [], inFlight: null,
-    applied: [], held: [], errors: [], replies: [], skipped: 0, undone: 0, cancelled: false, closeRequested: false,
+    applied: [], held: [], errors: [], replies: [], skipped: 0, undone: 0, cancelled: false, closeRequested: false, wasContinuing: false,
   };
 }
 
@@ -133,6 +133,15 @@ function closeList(s, extra = {}) {
     state: { ...withSession(s, { open: false, continuing: false, ...extra }), mode: 'working', listenKind: null },
     effects: [{ type: 'cue', kind: 'done' }],
   };
+}
+
+/**
+ * How long to wait for more after a phrase without "and" (0.6.8): the ⚙ choice after a first phrase (a single
+ * command wants a quick read-back), but at least listGraceMinMs once a list is underway (people pause between items).
+ */
+function graceMs(s, t) {
+  const listing = (s.session?.chunks ?? 0) > 1 || s.session?.wasContinuing;
+  return listing ? Math.max(t.graceListenMs, t.listGraceMinMs ?? 0) : t.graceListenMs;
 }
 
 /** After the list closes: ask held items (without waiting for chunks still saving), then wrap up. */
@@ -379,11 +388,11 @@ export function step(s, ev, t = TIMING) {
         const out = chain((x) => closeList(x), pump, maybeFinish)(st);
         return { state: out.state, effects: [...shown, ...out.effects] };
       }
-      const sent = pump(withSession(st, { continuing: c.continues }));
+      const sent = pump(withSession(st, { continuing: c.continues, wasContinuing: Boolean(st.session.wasContinuing || c.continues) }));
       const ack = c.text ? [{ type: 'cue', kind: 'heard' }] : [];
       const l = c.continues
         ? listen(sent.state, 'list', t.commandListenMs)
-        : listen(sent.state, 'grace', t.graceListenMs); // a dropped or late "and" still continues the list
+        : listen(sent.state, 'grace', graceMs(sent.state, t)); // a dropped or late "and" still continues the list
       return { state: l.state, effects: [...shown, ...sent.effects, ...ack, ...l.effects] };
     }
 
@@ -398,7 +407,7 @@ export function step(s, ev, t = TIMING) {
       const silentMs = sess.silentMs + (ev.elapsedMs ?? t.commandListenMs);
       if (s.listenKind === 'grace' && ev.speech && !sess.graceRetried && !sess.closeRequested) {
         // the mic picked up speech but made no words of it: give the late phrase one more chance
-        return listen(withSession(s, { silentMs, graceRetried: true }), 'grace', t.graceListenMs);
+        return listen(withSession(s, { silentMs, graceRetried: true }), 'grace', graceMs(s, t));
       }
       if (s.listenKind === 'list' && sess.continuing && !sess.closeRequested) {
         const left = t.listPauseMs - silentMs;

@@ -25,6 +25,8 @@ const CANCEL_ONLY = /^(?:(?:oh|ok|okay|no|wait)[\s,]+)*(?:never ?mind|cancel(?: 
 const SKIP_ONLY = /^(?:(?:oh|ok|okay|um+|uh+|no|just|let'?s)[\s,]+)*(?:skip(?: it| that| this| this one| that one)?|pass|next|i don'?t know|no idea|not sure)[\s.!…]*$/i;
 // A question rather than a list item: it gets no "Okay" and no "anything else?" wait (ADR-011 revision, 0.6.1).
 const QUESTION = /^(?:(?:hey|ok|okay|so|and|um+|uh+)[\s,]+)*(?:what(?:['’]?s| is| are| do| does| did)?|where(?:['’]?s| is| are| do| did)?|how (?:many|much|long|old|do|does|can)|help|do (?:we|i|you)|does|did|is there|are there|have (?:we|i)|which|when|who|tell me|show me)\b/i;
+// Just a place ("In the pantry,", "on the workbench"): an introduction — more is coming, like a trailing "and" (0.6.8).
+const PLACE_INTRO = /^(?:(?:okay|ok|so|and|um+|uh+)[\s,]+)*(?:in|on|into|inside|at)\s+(?:the|my|our)\s+[a-z'’-]+(?:\s+[a-z'’-]+){0,2}[\s,.…:]*$/i;
 const AND_TAIL = new RegExp(`[\\s,]+and${FILLER}[\\s,.…]*$`, 'i');
 const LEADING_AND = /^\s*and[\s,]+/i;
 const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
@@ -54,6 +56,7 @@ export function classifyUtterance(raw) {
   const continues = AND_TAIL.test(text);
   const body = text.replace(AND_TAIL, '').replace(LEADING_AND, '').trim();
   if (!body) return continues ? { kind: 'chunk', text: '', continues: true } : { kind: 'end' };
+  if (!continues && PLACE_INTRO.test(body)) return { kind: 'chunk', text: body, continues: true, intro: true };
   return continues || !(QUESTION.test(body) || /\?\s*$/.test(body))
     ? { kind: 'chunk', text: body, continues }
     : { kind: 'chunk', text: body, continues, question: true };
