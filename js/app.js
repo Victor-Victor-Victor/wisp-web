@@ -8,8 +8,11 @@ import { createSettings, timingFor } from './settings.js';
 import { createBackend } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
-import { routeOf, tabOf, search, createViewStore, relativeTime, placeContents, itemDetail } from './browse.js';
-import { renderPlaces, renderPlace, renderItem, renderSearchResults, renderRecent } from './screens.js';
+import {
+  routeOf, tabOf, search, createViewStore, relativeTime, placeContents, itemDetail, changeAction, editAction, unitChoices,
+  categoriesOf,
+} from './browse.js';
+import { renderPlaces, renderPlace, renderItem, renderSearchResults, renderRecent, openForm } from './screens.js';
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -478,8 +481,8 @@ function renderBrowse() {
   }
   const body = {
     places: () => renderPlaces(view),
-    place: () => renderPlace(view, route.id, now),
-    item: () => renderItem(view, route.id, now),
+    place: () => renderPlace(view, route.id, now, act),
+    item: () => renderItem(view, route.id, now, act),
     search: () => renderSearchResults(search(view, ui.searchBox.value), ui.searchBox.value),
     recent: () => renderRecent(view, now, undoFromRecent),
   }[route.screen];
@@ -502,24 +505,134 @@ function showRoute() {
 }
 
 let toastTimer = null;
-function toast(text) {
-  ui.toast.textContent = text;
+/** A short message over the screens; with a txn_id it carries an Undo button for that change. */
+function toast(text, undoTxn = null) {
+  const msg = document.createElement('span');
+  msg.textContent = text;
+  ui.toast.replaceChildren(msg);
+  if (undoTxn) {
+    const b = document.createElement('button');
+    b.className = 'btn small';
+    b.textContent = 'Undo';
+    b.addEventListener('click', () => undoFromRecent(undoTxn, b));
+    ui.toast.append(b);
+  }
   ui.toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { ui.toast.hidden = true; }, 5000);
+  toastTimer = setTimeout(() => { ui.toast.hidden = true; }, undoTxn ? 8000 : 5000);
 }
 
 async function undoFromRecent(txnId, button) {
   button.disabled = true;
   button.textContent = 'Undoing…';
   const r = await backend.undo(newId(), [txnId]);
-  log(`recent undo → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''}`);
+  log(`undo → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''}`);
   let text = r.data?.reply || 'Something went wrong. Nothing was undone.';
   if (r.kind === 'network') text = "I couldn't reach the inventory, so nothing was undone.";
   toast(text);
   viewStale = true;
   await refreshView({ force: true });
 }
+
+// ---------- manual corrections (ADR-011 step B) ----------
+/** Send one change; never queued (a stale tap must not land later). Shows the result with an Undo. */
+async function runChange(actions) {
+  ui.browseBody.classList.add('busy');
+  const t0 = performance.now();
+  const r = await backend.actions(actions, newId());
+  ui.browseBody.classList.remove('busy');
+  log(`change ${actions[0].intent} → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms`);
+  if (r.kind === 'ok' && r.data.status === 'ok') {
+    toast(r.data.reply, r.data.txn_id);
+    viewStale = true;
+    await refreshView({ force: true });
+  } else if (r.kind === 'ok' && r.data.status === 'clarify') {
+    toast(`Nothing was changed. ${r.data.reply}`);
+  } else if (r.kind === 'network') {
+    toast("I couldn't reach the inventory. Nothing was changed.");
+  } else {
+    toast(r.data?.reply || 'Something went wrong. Nothing was changed.');
+    if (r.kind === 'unauthorized') showSetup();
+  }
+}
+
+const unitOptions = (item) => unitChoices(item).map((u) => ({ value: u, label: u }));
+const placeName = (id) => viewEntry?.view.places.find((p) => p.id === id)?.name ?? 'there';
+
+const act = {
+  async change(kind, args) {
+    const view = viewEntry?.view;
+    if (!view) return;
+    const { item, placeId } = args;
+    const what = item.name.toLowerCase();
+    let values = {};
+    if (kind === 'set') {
+      values = await openForm({
+        title: `How many ${what} in ${placeName(placeId)}?`, submit: 'Set',
+        fields: [{ name: 'qty', label: 'Count', type: 'number', value: String(parseFloat(args.current) || 0) }],
+      });
+    } else if (kind === 'useSome') {
+      values = await openForm({
+        title: `How much ${what} did you use?`, submit: 'Take out',
+        fields: [{ name: 'qty', label: 'Amount', type: 'number' }, { name: 'unit', label: 'Unit', type: 'select', options: unitOptions(item) }],
+      });
+    } else if (kind === 'addPackage') {
+      values = await openForm({
+        title: `Add a package of ${what}`, submit: 'Add',
+        fields: [{ name: 'qty', label: 'Size', type: 'number', value: item.pkg_amount ? String(item.pkg_amount) : '' },
+          { name: 'unit', label: 'Unit', type: 'select', options: unitOptions(item) }],
+      });
+    } else if (kind === 'move') {
+      const others = view.places.filter((p) => p.id !== placeId).map((p) => ({ value: p.id, label: p.name }));
+      const v = await openForm({
+        title: `Move all the ${what} from ${placeName(placeId)} to…`, submit: 'Move',
+        fields: [{ name: 'to', label: 'Place', type: 'select', options: [...others, { value: '__new', label: 'A new place…' }] },
+          { name: 'name', label: 'New place name', type: 'text', placeholder: 'e.g. Basement Fridge', showWhen: { field: 'to', value: '__new' } }],
+      });
+      values = v && { to: v.to === '__new' ? { name: v.name } : { id: v.to } };
+    }
+    if (!values) return; // cancelled
+    const action = changeAction(view, kind, { ...args, ...values });
+    if (!action) {
+      toast("That doesn't look right. Nothing was changed.");
+      return;
+    }
+    await runChange([action]);
+  },
+
+  async edit(kind, target) {
+    const view = viewEntry?.view;
+    if (!view) return;
+    const common = [
+      { name: 'name', label: 'Name', type: 'text', value: target.name },
+      { name: 'aliases', label: 'Other names', type: 'text', value: target.aliases.join(', '), hint: 'Separate with commas. WISP understands these too.' },
+    ];
+    const fields = kind === 'item'
+      ? [...common,
+        { name: 'category', label: 'Category', type: 'text', value: target.category, list: categoriesOf(view) },
+        { name: 'subcategory', label: 'Subcategory', type: 'text', value: target.subcategory },
+        ...(target.tracking === 'measure' ? [
+          { name: 'needs_amount', label: 'Always ask how much', type: 'checkbox', value: target.needs_amount },
+          { name: 'pkg_amount', label: `Usual package size (${target.unit})`, type: 'number', value: target.pkg_amount === '' || target.pkg_amount == null ? '' : String(target.pkg_amount) },
+        ] : []),
+        { name: 'notes', label: 'Notes', type: 'textarea', value: target.notes }]
+      : [...common,
+        { name: 'area', label: 'Area', type: 'text', value: target.area, hint: 'e.g. Garage, Kitchen', list: [...new Set(view.places.map((p) => p.area).filter(Boolean))] },
+        { name: 'type', label: 'Type', type: 'text', value: target.type, hint: 'e.g. freezer, shelf, drawer' }];
+    const values = await openForm({ title: kind === 'item' ? `Edit ${target.name}` : `Edit ${target.name}`, fields });
+    if (!values) return;
+    if ('pkg_amount' in values) {
+      const n = Number(String(values.pkg_amount).replace(',', '.'));
+      values.pkg_amount = values.pkg_amount === '' ? '' : n > 0 ? n : (target.pkg_amount ?? '');
+    }
+    const action = editAction(kind, target, values);
+    if (!action) {
+      toast('Nothing to change.');
+      return;
+    }
+    await runChange([action]);
+  },
+};
 
 window.addEventListener('hashchange', showRoute);
 ui.searchBox.addEventListener('input', () => renderBrowse());

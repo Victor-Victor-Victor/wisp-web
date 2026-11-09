@@ -160,3 +160,80 @@ export function createViewStore(storage, key = 'wisp.view') {
     },
   };
 }
+
+// ---------- manual corrections (ADR-011 step B): the structured actions each button sends ----------
+const WEIGHT = ['lb', 'oz', 'kg', 'g'];
+const VOLUME = ['fl oz', 'cup', 'pt', 'qt', 'gal', 'ml', 'l'];
+
+/** Units offered when typing an amount of this item (its own unit first). */
+export function unitChoices(item) {
+  const family = WEIGHT.includes(item.unit) ? WEIGHT : VOLUME.includes(item.unit) ? VOLUME : [item.unit || 'each'];
+  return [item.unit, ...family.filter((u) => u !== item.unit)].filter(Boolean);
+}
+
+function refs(view, item, placeId) {
+  const place = view.places.find((p) => p.id === placeId);
+  return {
+    item: { matched_item_id: item.id, name: item.name },
+    location: { matched_location_id: placeId, name: place?.name ?? '' },
+  };
+}
+
+const positiveNumber = (v) => {
+  const n = Number(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** One button's change as engine actions. Returns null when the typed values aren't usable. */
+export function changeAction(view, kind, { item, placeId, lotId, qty, unit, to } = {}) {
+  const r = refs(view, item, placeId);
+  switch (kind) {
+    case 'plusOne': return { intent: 'add', ...r, quantity: 1, unit: item.unit || 'each' };
+    case 'minusOne': return { intent: 'remove', ...r, quantity: 1 };
+    case 'usedUp': return { intent: 'remove', ...r, lot_ids: [lotId] };
+    case 'set': {
+      const raw = String(qty ?? '').trim();
+      const n = Number(raw.replace(',', '.'));
+      return raw !== '' && Number.isFinite(n) && n >= 0 ? { intent: 'adjust', ...r, quantity: n } : null;
+    }
+    case 'useSome': {
+      const n = positiveNumber(qty);
+      return n == null ? null : { intent: 'remove', ...r, quantity: n, unit: unit || item.unit };
+    }
+    case 'addPackage': {
+      const n = positiveNumber(qty);
+      return n == null ? null : { intent: 'add', ...r, quantity: n, unit: unit || item.unit, package_count: 1 };
+    }
+    case 'move': {
+      const dest = view.places.find((p) => p.id === to?.id);
+      const name = String(to?.name ?? '').trim();
+      if (!dest && !name) return null;
+      return { intent: 'move', ...r, to_location: dest ? { matched_location_id: dest.id, name: dest.name } : { name } };
+    }
+    default: return null;
+  }
+}
+
+/** The Edit form's values → an edit action with only what changed (null when nothing did). */
+export function editAction(kind, current, values) {
+  const fields = kind === 'item'
+    ? ['name', 'aliases', 'category', 'subcategory', 'notes', 'needs_amount', 'pkg_amount']
+    : ['name', 'aliases', 'area', 'type'];
+  const now = (f) => (f === 'aliases' ? current.aliases.join(', ') : current[f]);
+  const set = {};
+  for (const f of fields) {
+    if (!(f in values)) continue;
+    let v = values[f];
+    if (typeof v === 'string') v = v.replace(/\s+/g, ' ').trim();
+    if (f === 'aliases') v = v.split(',').map((a) => a.trim()).filter(Boolean).join(', ');
+    if (String(v ?? '') === String(now(f) ?? '')) continue;
+    set[f === 'pkg_amount' ? 'default_pkg_amount' : f] = v;
+  }
+  if (!Object.keys(set).length) return null;
+  return kind === 'item' ? { intent: 'edit', item_id: current.id, set } : { intent: 'edit', location_id: current.id, set };
+}
+
+/** Categories already in use, for the Edit form's suggestions. */
+export function categoriesOf(view) {
+  return [...new Set(view.items.map((i) => i.category).filter(Boolean))].sort();
+}

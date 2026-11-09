@@ -367,13 +367,14 @@ export function step(s, ev, t = TIMING) {
       if (c.kind === 'end') return chain((x) => closeList(x), maybeFinish)(st);
       if (c.kind === 'cancel') return chain((x) => closeList(x, { cancelled: true, queue: [] }), maybeFinish)(st);
       const shown = [];
+      const question = c.question && st.session.chunks === 0; // "what's in the garage freezer?": answer, don't list
       if (c.text) {
         const chunk = { kind: 'list', transcript: c.text, requestId: ev.requestId };
         st = withSession(st, { queue: [...st.session.queue, chunk], chunks: st.session.chunks + 1 });
         st = withUndo(st, { stack: [...st.undo.stack, { key: ev.requestId, label: c.text, txns: [], pending: true, cancelled: false }] });
         shown.push({ type: 'showItem', status: 'pending', text: c.text });
       }
-      if (st.session.closeRequested || c.ends) {
+      if (st.session.closeRequested || c.ends || question) {
         const out = chain((x) => closeList(x), pump, maybeFinish)(st);
         return { state: out.state, effects: [...shown, ...out.effects] };
       }
