@@ -74,6 +74,10 @@ export function createMicLab({ plugin, log, sayOkay, playOkay, playListening, ro
       const c = counts;
       summary();
       show(c ? `Stopped (${d.reason}): ${c.segments} phrases, ${c.ready} mic starts.` : `Stopped (${d.reason}).`);
+      if (c) {
+        for (const h of handles) h?.remove?.(); // stop logging: WISP's own sessions use the same module
+        handles = [];
+      }
     });
   }
 

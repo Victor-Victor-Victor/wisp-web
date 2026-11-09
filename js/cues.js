@@ -1,6 +1,8 @@
 // Cues (ADR-010): what WISP signals between spoken sentences, named by meaning. The chosen style decides how each
-// one sounds — a spoken word, a speech-shaped tone, a plain beep, a buzz, or nothing. Android plays its own beep
-// whenever the mic opens (a web app can't silence it), so WISP adds no "listening" sound of its own.
+// one sounds — a spoken word, a speech-shaped tone, a plain beep, a buzz, or nothing. On the web, Android plays its own
+// beep whenever the mic opens (a web app can't silence it), so WISP adds no "listening" sound of its own there. In the
+// Android app WISP opens the mic itself (no beep, ADR-016), so it plays a short start sound when the mic opens
+// ({opening: true}) — once per list, not after every phrase.
 //   heard    — got that phrase, go on            done   — list finished, read-back follows
 //   needsYou — a question is coming              problem — something went wrong (see screen)
 //   undo     — the last item was undone          paused — list paused: tap the mic to go on
@@ -18,6 +20,7 @@ const GLIDES = {
 };
 const HIGH = [[1046, 1046, 0, 0.08]];
 const LOW = [[262, 262, 0, 0.16]];
+const OPENING = [[660, 880, 0, 0.09]]; // the app's mic just opened: a short, soft "bip" up
 const BEEPS = { heard: HIGH, done: HIGH, needsYou: LOW, problem: LOW, undo: LOW, paused: LOW };
 const BUZZ = {
   listening: [30], heard: [40], done: [30, 60, 30], needsYou: [40, 80, 40], problem: [300], undo: [30, 50, 30, 50, 30], paused: [300],
@@ -35,10 +38,13 @@ export const CUE_KINDS = ['heard', 'done', 'needsYou', 'problem', 'undo', 'pause
  * quiet: the mic is open and hears any sound — even the vibration motor — and then restarts with an Android beep, so
  * nothing plays at all (the screen shows it).
  */
-export function cuePlan(kind, settings, { quiet = false } = {}) {
+export function cuePlan(kind, settings, { quiet = false, opening = false } = {}) {
   const style = settings?.style ?? 'voice';
   const plan = { say: null, clip: null, tones: [], vibrate: null };
   if (style === 'silent' || quiet) return plan;
+  if (kind === 'listening' && opening) {
+    return style === 'vibrate' ? { ...plan, vibrate: BUZZ.listening } : { ...plan, tones: OPENING };
+  }
   if (style === 'vibrate') return { ...plan, vibrate: BUZZ[kind] ?? null };
   if (style === 'voice') {
     const kay = kind === 'heard' && settings?.word === 'kay'; // ⚙ Voice word: the quicker one
@@ -145,8 +151,8 @@ export function createCuePlayer({ win = window, getSettings, log = () => {}, spe
     }
   }
   return {
-    play(kind, { settings: override, quiet = false } = {}) {
-      const plan = cuePlan(kind, override ?? getSettings(), { quiet });
+    play(kind, { settings: override, quiet = false, opening = false } = {}) {
+      const plan = cuePlan(kind, override ?? getSettings(), { quiet, opening });
       if (plan.vibrate && win.navigator?.vibrate) {
         try { win.navigator.vibrate(plan.vibrate); } catch { /* not allowed */ }
       }

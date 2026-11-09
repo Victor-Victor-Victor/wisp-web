@@ -1,32 +1,54 @@
-// Speech in/out inside the Android app (ADR-015): the phone's own recognizer and voice, through Capacitor plugins
-// (@capacitor-community/speech-recognition, @capacitor-community/text-to-speech). Same interface as voice.js, so
-// the dialog and cues don't know which one they have. (Inside an app, the web view has no Web Speech API.)
+// Speech in/out inside the Android app (ADR-015, ADR-016). Same interface as voice.js, so the dialog and cues don't
+// know which one they have. (Inside an app, the web view has no Web Speech API.)
 //
-// plugins: { SpeechRecognition, TextToSpeech } — the registered Capacitor plugin proxies (fakes in tests).
+// Listening uses WISP's own speech module (WispSpeech, android/…/WispSpeechPlugin.java): ONE microphone session stays
+// open across listens, so there's no restart beep and no clipped first words between phrases. WISP records the mic
+// itself (with echo cancelling) and feeds the phone's recognizer; the module sends one "segment" per phrase (a pause
+// of PAUSE_MS ends it). listen() takes the next phrase — one said while WISP was busy waits in a short queue — so
+// people can keep talking through the "Okay". The session closes when WISP stops listening for IDLE_CLOSE_MS.
+// Echo guard: a phrase that starts while WISP is speaking (or within ECHO_TAIL_MS after) is WISP hearing itself — dropped.
+// Speaking uses @capacitor-community/text-to-speech.
+//
+// plugins: { WispSpeech, TextToSpeech } — the registered Capacitor plugin proxies (fakes in tests).
 
-const STOP_QUIETLY = (p) => p?.catch?.(() => {});
-const FAST_FAIL_MS = 600; // a failure this soon after start, before any speech, means the mic wasn't ready
-const RETRY_MS = 300;
-const RETRIES = 3; // attempts per listen
-const SETTLE_MS = 250; // gap after one listen ends before the next starts
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const QUIET = (p) => p?.catch?.(() => {});
+export const SESSION = {
+  language: 'en-US', mode: 'single', engine: 'auto', mic: 'app', echoCancel: true, phraseEnd: 'watch', silenceMs: 1500,
+};
+const IDLE_CLOSE_MS = 1500; // no listen (and no speech) this long: close the mic
+const ECHO_TAIL_MS = 400;
+const WORDS_GRACE_MS = 4000; // words arrived but no phrase yet: wait this long after the last word before giving up
+const QUEUE_MAX = 4;
+const QUEUE_MAX_AGE_MS = 15000;
 
-export function createNativeVoice({ plugins, log = () => {}, onInterim = () => {}, now = () => Date.now() }) {
-  const SR = plugins.SpeechRecognition;
+/** onOpen: the mic just opened (once per session) — the app plays its start sound (there's no Android beep). */
+export function createNativeVoice({ plugins, log = () => {}, onInterim = () => {}, onOpen = () => {}, now = () => Date.now() }) {
+  const SP = plugins.WispSpeech;
   const TTS = plugins.TextToSpeech;
-  let active = null; // the listen in progress: {stop, abort}
-  let seq = 0; // the newest listen() — an older one still waiting gives way
-  let lastEnd = -Infinity; // when the last listen finished (ms)
   let permitted = null; // Promise<boolean>, asked once
+  let listeners = null; // Promise, added once
+  let session = null; // Promise<boolean> while open (or opening)
+  let sessionId = null; // the open session's id (events from an earlier one are ignored)
+  let stoppingId = null; // a session we asked to stop: its last phrase still counts
+  const ours = (id) => id !== undefined && id !== null && (id === sessionId || id === stoppingId);
+  let waiter = null; // the listen in progress
+  let queue = []; // phrases heard with nobody listening: {text, at}
+  let words = false; // partial words of a phrase in progress
+  let lastWordAt = 0;
+  let phraseEcho = false; // the phrase in progress began while WISP was speaking
+  let speaking = 0; // speak() calls in progress
+  let spokeUntil = -Infinity; // end of the echo tail after the last speech
+  let idleTimer = null;
 
-  /** Microphone permission: checked, then asked for once. */
+  const echoing = () => speaking > 0 || now() < spokeUntil;
+
   function ensurePermission() {
     permitted ??= (async () => {
       try {
-        const now = await SR.checkPermissions();
-        if (now?.speechRecognition === 'granted') return true;
-        const asked = await SR.requestPermissions();
-        return asked?.speechRecognition === 'granted';
+        const st = await SP.checkPermissions();
+        if (st?.microphone === 'granted') return true;
+        const asked = await SP.requestPermissions();
+        return asked?.microphone === 'granted';
       } catch (e) {
         log(`permission check failed: ${e?.message ?? e}`);
         return false;
@@ -38,106 +60,179 @@ export function createNativeVoice({ plugins, log = () => {}, onInterim = () => {
     });
   }
 
+  function addListeners() {
+    listeners ??= Promise.all([
+      SP.addListener('partial', ({ text, session: id }) => {
+        const t = String(text ?? '').trim();
+        if (!t || !ours(id)) return;
+        if (!words) phraseEcho = echoing(); // the first words decide: ours or theirs
+        words = true;
+        lastWordAt = now();
+        if (!phraseEcho) onInterim(t);
+      }),
+      SP.addListener('segment', ({ text, via, session: id }) => {
+        if (!ours(id)) return; // e.g. the mic lab's session
+        const t = String(text ?? '').trim();
+        const echo = words ? phraseEcho : echoing();
+        words = false;
+        phraseEcho = false;
+        if (!t) return;
+        if (echo) {
+          log(`dropped (heard while speaking): ${t.length} chars`);
+          return;
+        }
+        log(`phrase${via ? ` (${via})` : ''}`);
+        onInterim(t);
+        if (waiter) waiter.done({ type: 'heard', text: t });
+        else {
+          queue.push({ text: t, at: now() });
+          if (queue.length > QUEUE_MAX) queue.shift();
+        }
+      }),
+      SP.addListener('error', ({ code, name }) => {
+        if (name !== 'no-match' && name !== 'no-speech') log(`mic error ${code} ${name}`);
+      }),
+      SP.addListener('ended', ({ reason, session: id }) => {
+        if (id !== sessionId) return; // an earlier session we already let go
+        log(`mic closed (${reason})`);
+        session = null;
+        sessionId = null;
+        words = false;
+        queue = [];
+        const failed = reason && !['stopped', 'cancelled', 'paused', 'destroyed'].includes(reason);
+        waiter?.done(failed ? { type: 'error', error: reason } : { type: 'silence', speech: false });
+      }),
+      SP.addListener('note', ({ text }) => {
+        if (/could not|failed|error/i.test(text ?? '')) log(`mic: ${text}`);
+      }),
+    ]).catch((e) => log(`mic listeners failed: ${e?.message ?? e}`));
+    return listeners;
+  }
+
+  function openSession() {
+    session ??= (async () => {
+      await addListeners();
+      try {
+        const r = await SP.startSession(SESSION);
+        sessionId = r?.session ?? null;
+        stoppingId = null;
+        onOpen();
+        log(`mic open (${r?.mode ?? '?'}${r?.mic === 'app' ? ', own mic' : ''}${r?.echoCancel ? ', echo cancel' : ''}${r?.onDevice ? ', on-device' : ''})`);
+        return true;
+      } catch (e) {
+        log(`mic start failed: ${e?.message ?? e}`);
+        session = null;
+        return false;
+      }
+    })();
+    return session;
+  }
+
+  function closeSoon() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (waiter || speaking || !session) return;
+      release();
+      QUIET(SP.cancelSession());
+    }, IDLE_CLOSE_MS);
+  }
+
   /**
-   * Listen for one utterance (the final result only: the plugin can't report errors once it streams partial words).
-   * 0.7.3 (first app test): the plugin builds a fresh Android recognizer on every start, and on Android 17 a start
-   * right after the previous one often fails within milliseconds ("Didn't understand…"). Such a fast failure — before
-   * any speech — isn't silence: wait a moment and start again (up to RETRIES times), so lists don't end by themselves.
-   * A new listen also ends one still running, so two never overlap.
+   * The next phrase. Gives up (silence) when no words start within timeoutMs; once words have started, waits for the
+   * phrase to end.
    * @returns {Promise<{type:"heard", text}|{type:"silence", speech}|{type:"error", error}>}
    */
   async function listen({ timeoutMs }) {
-    active?.abort(); // never two at once (e.g. a resume while the permission box was up)
-    const mine = ++seq;
-    if (!(await ensurePermission())) return { type: 'error', error: 'not-allowed' };
-    if (mine !== seq) return { type: 'silence', speech: false }; // replaced while asking for permission
-    const rest = SETTLE_MS - (now() - lastEnd);
-    if (rest > 0) await wait(rest); // let the last recognizer finish shutting down
-    if (mine !== seq) return { type: 'silence', speech: false };
+    waiter?.done({ type: 'silence', speech: false }); // never two at once
+    clearTimeout(idleTimer);
+    const mine = {};
+    waiter = mine;
+    if (!(await ensurePermission())) {
+      if (waiter === mine) waiter = null;
+      return { type: 'error', error: 'not-allowed' };
+    }
+    if (waiter !== mine) return { type: 'silence', speech: false }; // replaced while asking
+    if (!(await openSession())) {
+      if (waiter === mine) waiter = null;
+      return { type: 'error', error: 'mic-start-failed' };
+    }
+    if (waiter !== mine) return { type: 'silence', speech: false };
+    queue = queue.filter((q) => now() - q.at < QUEUE_MAX_AGE_MS);
+    if (queue.length) {
+      const { text } = queue.shift();
+      waiter = null;
+      log('heard (said while WISP was busy)');
+      closeSoon();
+      return { type: 'heard', text };
+    }
+    log(`listening (${timeoutMs} ms)`);
     return new Promise((resolve) => {
-      let started = false;
-      let settled = false;
-      let handle = null;
-      let attempt = 0;
-      const done = (res) => {
-        if (settled) return;
-        settled = true;
+      let timer = null;
+      mine.done = (res) => {
+        if (mine.settled) return;
+        mine.settled = true;
         clearTimeout(timer);
-        STOP_QUIETLY(handle?.remove?.());
-        if (active === me) active = null;
-        lastEnd = now();
+        if (waiter === mine) waiter = null;
+        closeSoon();
         resolve(res);
       };
-      const timer = setTimeout(() => {
-        if (started) return;
-        log('listen: no speech, giving up');
-        STOP_QUIETLY(SR.stop());
-        done({ type: 'silence', speech: false });
-      }, timeoutMs);
-      const me = {
-        stop: () => STOP_QUIETLY(SR.stop()), // "I'm done talking": the recognizer finishes with what it has
-        abort: () => {
-          STOP_QUIETLY(SR.stop());
-          done({ type: 'silence', speech: started });
-        },
-      };
-      active = me;
-      Promise.resolve(SR.addListener('listeningState', (d) => {
-        if (d?.status === 'started' && !started && !settled) {
-          started = true;
-          log('speech start');
+      const check = () => {
+        if (mine.settled) return;
+        if (words && !phraseEcho && now() - lastWordAt < WORDS_GRACE_MS) {
+          timer = setTimeout(check, 500); // someone is mid-phrase: let them finish
+          return;
         }
-      })).then((h) => {
-        handle = h;
-        if (settled) STOP_QUIETLY(h?.remove?.());
-      }).catch(() => {});
-      log(`listening (${timeoutMs} ms)`);
-
-      const begin = () => {
-        attempt += 1;
-        const at = now();
-        SR.start({ language: 'en-US', maxResults: 1, partialResults: false, popup: false })
-          .then((r) => {
-            const text = String(r?.matches?.[0] ?? '').trim();
-            if (text) {
-              onInterim(text);
-              done({ type: 'heard', text });
-            } else {
-              done({ type: 'silence', speech: started });
-            }
-          })
-          .catch((e) => {
-            if (settled) return;
-            const msg = String(e?.message ?? e);
-            if (/permission/i.test(msg)) {
-              log(`recognition error: ${msg}`);
-              done({ type: 'error', error: 'not-allowed' });
-              return;
-            }
-            const fast = now() - at < FAST_FAIL_MS && !started;
-            if (fast && attempt < RETRIES) {
-              log(`mic not ready (${msg}); retrying`);
-              setTimeout(() => { if (!settled) begin(); }, RETRY_MS);
-              return;
-            }
-            log(`recognition error: ${msg}`);
-            if (/no match|no speech/i.test(msg) || fast) done({ type: 'silence', speech: started });
-            else done({ type: 'error', error: msg });
-          });
+        if (words && !phraseEcho) log('words but no phrase; giving up');
+        else log('listen: no speech, giving up');
+        mine.done({ type: 'silence', speech: words && !phraseEcho });
       };
-      begin();
+      timer = setTimeout(check, timeoutMs);
     });
+  }
+
+  /** Forget the open session (we're closing it ourselves). */
+  function release() {
+    session = null;
+    sessionId = null;
+    words = false;
+    queue = [];
+  }
+
+  /** "I'm done talking": the phrase in progress ends now (it still arrives), then the mic closes. */
+  function stop() {
+    if (!session) return;
+    if (!words || phraseEcho) {
+      abort(); // nothing being said: done now
+      return;
+    }
+    stoppingId = sessionId;
+    session = null;
+    sessionId = null;
+    QUIET(SP.stopSession()); // the module sends the phrase so far as a segment, then closes
+  }
+
+  /** Stop listening now; nothing more arrives. */
+  function abort() {
+    waiter?.done({ type: 'silence', speech: false });
+    const open = session;
+    release();
+    if (open) QUIET(SP.cancelSession());
   }
 
   /** Speak text with the phone's voice; always resolves (when done, on error, or after a safety timeout). */
   function speak(text) {
     if (!text) return Promise.resolve();
+    speaking += 1;
+    clearTimeout(idleTimer);
     return new Promise((resolve) => {
       let finished = false;
       const finish = (why) => {
         if (finished) return;
         finished = true;
         clearTimeout(safety);
+        speaking -= 1;
+        spokeUntil = now() + ECHO_TAIL_MS;
+        if (session && !waiter) closeSoon();
         log(`speech ${why}`);
         resolve();
       };
@@ -153,9 +248,9 @@ export function createNativeVoice({ plugins, log = () => {}, onInterim = () => {
     native: true,
     chime: () => Promise.resolve(false),
     listen,
-    stop: () => active?.stop(),
-    abort: () => active?.abort(),
+    stop,
+    abort,
     speak,
-    cancelSpeech: () => STOP_QUIETLY(TTS.stop()),
+    cancelSpeech: () => QUIET(TTS.stop()),
   };
 }

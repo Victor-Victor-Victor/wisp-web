@@ -84,8 +84,9 @@ const nativePlugin = (name) => CAP?.Plugins?.[name] ?? CAP?.registerPlugin?.(nam
 const voice = NATIVE
   ? createNativeVoice({
     // no bundler: the native bridge exposes each plugin as Capacitor.Plugins.<name>
-    plugins: { SpeechRecognition: nativePlugin('SpeechRecognition'), TextToSpeech: nativePlugin('TextToSpeech') },
+    plugins: { WispSpeech: nativePlugin('WispSpeech'), TextToSpeech: nativePlugin('TextToSpeech') },
     log, onInterim,
+    onOpen: () => cues.play('listening', { opening: true }), // WISP's own start sound (no Android beep)
   })
   : createVoice({ log, onInterim });
 const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES });
