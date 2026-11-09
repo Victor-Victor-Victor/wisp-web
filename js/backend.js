@@ -5,6 +5,9 @@
 /**
  * @param {{url:string, getToken:()=>string|null, fetchFn:typeof fetch, timeoutMs:number, user?:string}} opts
  */
+/** Browse-screen changes: answer with the fresh snapshot and the server's timing (ADR-011). */
+export const FRESH = Object.freeze({ return_view: true, timing: true });
+
 export function createBackend({ url, getToken, fetchFn, timeoutMs, user = 'phone' }) {
   async function post(body) {
     const token = getToken();
@@ -42,14 +45,14 @@ export function createBackend({ url, getToken, fetchFn, timeoutMs, user = 'phone
     list: (transcript, location, requestId) => post({ transcript, list: { location: location ?? null }, request_id: requestId }),
     answer: (transcript, pending, clarify, requestId) => post({ transcript, pending, clarify, request_id: requestId }),
     /** Undo exactly these saved transactions, all or none (ADR-010). There is deliberately no untargeted undo from the app. */
-    undo: (requestId, txnIds) => {
+    undo: (requestId, txnIds, extra = {}) => {
       const ids = (Array.isArray(txnIds) ? txnIds : [txnIds]).filter(Boolean);
       return ids.length
-        ? post({ actions: ids.map((id) => ({ intent: 'undo', txn_id: id })), request_id: requestId })
+        ? post({ actions: ids.map((id) => ({ intent: 'undo', txn_id: id })), request_id: requestId, ...extra })
         : Promise.resolve({ kind: 'server', error: 'no_txn', data: { reply: "There's nothing to undo." } });
     },
     /** Structured actions from the browse screens' buttons (ADR-011). Never queued offline. */
-    actions: (actions, requestId) => post({ actions, request_id: requestId }),
+    actions: (actions, requestId) => post({ actions, request_id: requestId, ...FRESH }),
     /** Read-only snapshot for the browse screens (ADR-011). */
     view: () => post({ view: true }),
     /** Harmless check that the token works (dry-run query: writes nothing). */

@@ -5,7 +5,7 @@ import { step, initialState } from './dialog.js';
 import { createVoice } from './voice.js';
 import { createCuePlayer, CUE_GUIDE, describeCue, CLIP_FILES } from './cues.js';
 import { createSettings, timingFor } from './settings.js';
-import { createBackend } from './backend.js';
+import { createBackend, FRESH } from './backend.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
 import {
@@ -525,11 +525,32 @@ function toast(text, undoTxn = null) {
 async function undoFromRecent(txnId, button) {
   button.disabled = true;
   button.textContent = 'Undoing…';
-  const r = await backend.undo(newId(), [txnId]);
-  log(`undo → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''}`);
+  const t0 = performance.now();
+  const r = await backend.undo(newId(), [txnId], FRESH);
+  log(`undo → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms${serverTiming(r)}`);
   let text = r.data?.reply || 'Something went wrong. Nothing was undone.';
   if (r.kind === 'network') text = "I couldn't reach the inventory, so nothing was undone.";
   toast(text);
+  await adoptView(r);
+}
+
+/** "(server 1900: load 120, engine 4, write 1650)" from a timed response. */
+function serverTiming(r) {
+  const t = r.data?.timing;
+  if (!t) return '';
+  const parts = ['load', 'engine', 'write'].filter((k) => t[k] != null).map((k) => `${k} ${Math.round(t[k])}`);
+  return ` (server ${Math.round(t.total ?? 0)}: ${parts.join(', ')}${t.cache ? `, cache ${t.cache}` : ''})`;
+}
+
+/** A change's response carries the fresh view: show it at once; otherwise fetch it. */
+async function adoptView(r) {
+  if (r.kind === 'ok' && r.data.view) {
+    viewEntry = viewStore.save(r.data.view, r.data.fetched_at);
+    viewProblem = '';
+    viewStale = false;
+    renderBrowse();
+    return;
+  }
   viewStale = true;
   await refreshView({ force: true });
 }
@@ -541,11 +562,10 @@ async function runChange(actions) {
   const t0 = performance.now();
   const r = await backend.actions(actions, newId());
   ui.browseBody.classList.remove('busy');
-  log(`change ${actions[0].intent} → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms`);
+  log(`change ${actions[0].intent} → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms${serverTiming(r)}`);
   if (r.kind === 'ok' && r.data.status === 'ok') {
     toast(r.data.reply, r.data.txn_id);
-    viewStale = true;
-    await refreshView({ force: true });
+    await adoptView(r);
   } else if (r.kind === 'ok' && r.data.status === 'clarify') {
     toast(`Nothing was changed. ${r.data.reply}`);
   } else if (r.kind === 'network') {
