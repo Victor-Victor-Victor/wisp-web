@@ -74,12 +74,18 @@ export function runList(state, parsed, { transcript, listLocation = null, now, u
     if (ref) location = locationRef(s, ref);
   };
 
-  for (const original of parsed.actions) {
+  let restated = false;
+  for (const [order, original] of parsed.actions.entries()) {
     let action = original;
     const { intent } = action;
     if (intent === 'cancel') continue;
     if (intent === 'unknown') {
-      errors.push({ reply: `I didn't catch "${transcript}".` });
+      // not a dead end (ADR-017, 0.9.1): asked at the end — "What did you mean?" — and the answer is a new phrase
+      if (!restated) {
+        const question = `I didn't catch "${transcript}". What did you mean?`;
+        held.push({ kind: 'restate', question, what: transcript, location, order });
+        restated = true;
+      }
       continue;
     }
     if (intent === 'query' || intent === 'help') {
@@ -110,7 +116,7 @@ export function runList(state, parsed, { transcript, listLocation = null, now, u
     }
     if (r.status === 'clarify') {
       const question = confident && !changed ? r.reply : `I heard ${lowerName(action.item?.name ?? 'something')}. ${r.reply}`;
-      held.push({ kind: 'clarify', question, clarify: { ...r.clarify, question }, pending: r.pending });
+      held.push({ kind: 'clarify', question, clarify: { ...r.clarify, question }, pending: r.pending, what: action.item?.name ?? null, order });
       carry(action);
       continue;
     }
@@ -122,6 +128,8 @@ export function runList(state, parsed, { transcript, listLocation = null, now, u
         question,
         clarify: { question, missing: ['confirm'], action_index: 0 },
         pending: { transcript, actions: [action] },
+        what: summary,
+        order,
       });
       carry(action);
       continue;
@@ -134,6 +142,7 @@ export function runList(state, parsed, { transcript, listLocation = null, now, u
       reply: r.reply,
       new_location: r.changes.locations.add[0]?.name ?? null,
       new_item: r.changes.items.add[0]?.name ?? null,
+      order, // where it was in the phrase: a spoken correction takes back only the last item (0.9.1)
     });
     carry(action);
   }

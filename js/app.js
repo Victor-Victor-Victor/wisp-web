@@ -187,7 +187,7 @@ async function run(fx) {
     case 'showData': renderResults(fx.data); break;
     case 'showSetup': showSetup(); break;
     case 'attention':
-      saveAttention([...fx.items.map((h) => ({ transcript: h.pending?.transcript ?? '', text: `WISP needs to ask: ${h.question}` })), ...loadAttention()]);
+      saveAttention([...fx.items.map((h) => ({ transcript: h.pending?.transcript ?? h.what ?? '', text: `WISP needs to ask: ${h.question}` })), ...loadAttention()]);
       break;
     default: break;
   }

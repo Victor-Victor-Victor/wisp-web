@@ -37,7 +37,7 @@ const BARE_AND = new RegExp(`^and${FILLER}[\\s,.…]*$`, 'i');
 // correction, and "no more" stays "end of list".
 const AMOUNT_WORD = '(?:a|an|the|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|a couple|\\d+)';
 const SAID = "(?:i meant|i mean|i said|that'?s|that is|that was|it'?s|it is|it was|it should be|should be|make (?:that|it))";
-const NO_WORD = '(?:no|nope|nah)(?:[\\s,]+wait)?';
+const NO_WORD = '(?:no|nope|nah)(?:[\\s,]+(?:no|wait|sorry))*'; // "no, no, I meant…", "no sorry, a box…"
 const CORRECTION = new RegExp(
   `^(?:(?:oh|oops|sorry|wait|um+|uh+)[\\s,]+)*(?:${NO_WORD}[\\s,]+${SAID}|${NO_WORD}(?=[\\s,]+${AMOUNT_WORD}\\b)`
   + '|scratch that|i meant|i mean|correction|make (?:that|it)|change (?:that|it) to)(?=$|[\\s,.:;!])[\\s,.:;!]*',

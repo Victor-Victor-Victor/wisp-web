@@ -13,7 +13,7 @@
 
 const QUIET = (p) => p?.catch?.(() => {});
 export const SESSION = {
-  language: 'en-US', mode: 'single', engine: 'auto', mic: 'app', echoCancel: true, phraseEnd: 'watch', silenceMs: 1500,
+  language: 'en-US', mode: 'single', engine: 'auto', mic: 'app', echoCancel: true, phraseEnd: 'watch', silenceMs: 1000,
 };
 const IDLE_CLOSE_MS = 1500; // no listen (and no speech) this long: close the mic
 const ECHO_TAIL_MS = 400;
