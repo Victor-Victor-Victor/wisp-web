@@ -104,7 +104,14 @@ function unitAt(t, i) {
  * An amount at the start of t: {quantity, unit, package_count, next}. Nothing said → quantity/unit null, next 0.
  * Returns null for amounts it can't read with certainty (a unit without a number, a number without anything after).
  */
+// "lots of crackers", "a bunch of bananas": an amount that isn't a number — said like that, the item's amount is
+// unknown (null), as with no amount at all (0.7.2)
+const VAGUE = [['a', 'lot', 'of'], ['lots', 'of'], ['a', 'bunch', 'of'], ['bunch', 'of'], ['plenty', 'of'], ['a', 'few', 'more'], ['some', 'more'], ['more']];
+
 function amountAt(t, i = 0) {
+  for (const v of VAGUE) {
+    if (v.every((w, k) => t[i + k] === w)) return { quantity: null, unit: null, package_count: null, next: i + v.length };
+  }
   let n = numberAt(t, i);
   if (!n) {
     if (!unitAt(t, i)) return { quantity: null, unit: null, package_count: null, next: i };
