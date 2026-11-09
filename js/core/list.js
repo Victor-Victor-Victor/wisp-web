@@ -50,11 +50,13 @@ function locationRef(state, ref) {
 /**
  * @param state   current inventory
  * @param parsed  validated parse ({actions})
- * @param opts    {transcript, listLocation, now, user, usage, commit(state, changes) => newState}
+ * @param opts    {transcript, listLocation, now, user, usage, confirmed, commit(state, changes) => newState}
+ *                `confirmed`: the person just said what they meant ("What did you mean?"), so a low-confidence item
+ *                (a new item from the rules) isn't asked "I heard: … Right?" again; changed words still are.
  *                commit writes one item's changes (sheet + cache) and returns the post-write state.
  * @returns {{state, applied[], held[], errors[], location, reply, data[]}}
  */
-export function runList(state, parsed, { transcript, listLocation = null, now, user, usage = null, commit }) {
+export function runList(state, parsed, { transcript, listLocation = null, now, user, usage = null, confirmed = false, commit }) {
   let s = state;
   let usageLeft = usage;
   let location = listLocation;
@@ -107,7 +109,7 @@ export function runList(state, parsed, { transcript, listLocation = null, now, u
     if (!WRITES.has(intent)) continue;
 
     if (intent === 'add' && !action.location && location) action = { ...action, location };
-    const confident = (action.confidence ?? 1) >= LIST_CONFIDENCE;
+    const confident = confirmed || (action.confidence ?? 1) >= LIST_CONFIDENCE;
     const changed = changedWordQuestion(s, action, transcript);
     const r = run(action);
     if (r.status === 'rejected') {

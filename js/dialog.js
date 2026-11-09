@@ -497,7 +497,8 @@ export function step(s, ev, t = TIMING) {
         }
         if (no) {
           // "No, that's one box of crackers": the corrected phrase replaces the item, in the same place
-          const request = { kind: 'list', transcript: no.rest, location: heldPlace(s, item), requestId: ev.requestId };
+          // what they meant, said on purpose: no second "I heard: … Right?" for a new item (0.9.2)
+          const request = { kind: 'list', transcript: no.rest, location: heldPlace(s, item), requestId: ev.requestId, confirmed: true };
           return {
             state: { ...s, mode: 'working', listenKind: null, review: { ...s.review, current: request, restating: false } },
             effects: [{ type: 'cue', kind: 'heard' }, { type: 'send', request }],

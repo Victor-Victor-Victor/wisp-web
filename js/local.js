@@ -93,7 +93,7 @@ export function createLocalBackend({ store, now = () => new Date().toISOString()
 
   return {
     /** One piece of a spoken list (and every single command: the app always talks in list mode). */
-    list: (transcript, location, requestId) => handle(requestId, async (st) => {
+    list: (transcript, location, requestId, { confirmed = false } = {}) => handle(requestId, async (st) => {
       const started = clock();
       const timing = {};
       let t0 = clock();
@@ -104,7 +104,7 @@ export function createLocalBackend({ store, now = () => new Date().toISOString()
       const toWrite = [];
       t0 = clock();
       const out = runList(st, p, {
-        transcript, listLocation, now: now(), user,
+        transcript, listLocation, now: now(), user, confirmed,
         commit: (s, changes) => {
           if (hasChanges(changes)) toWrite.push(changes);
           return nextState(s, changes);

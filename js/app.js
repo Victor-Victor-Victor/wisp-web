@@ -125,7 +125,7 @@ function dispatch(ev) {
 }
 
 function send(req) {
-  if (req.kind === 'list') return backend.list(req.transcript, req.location, req.requestId);
+  if (req.kind === 'list') return backend.list(req.transcript, req.location, req.requestId, { confirmed: req.confirmed === true });
   if (req.kind === 'answer') return backend.answer(req.transcript, req.pending, req.clarify, req.requestId);
   if (req.kind === 'undo') return backend.undo(req.requestId, req.txnIds);
   return backend.command(req.transcript, req.requestId);

@@ -40,7 +40,7 @@ export function article(phrase) {
  */
 export function countPhrase(n, unit, name) {
   const u = normalizeUnit(unit) ?? 'each';
-  if (Math.abs(n - 1) <= EPS) return name;
+  if (Math.abs(n - 1) <= EPS) return u === 'each' || u === 'package' ? name : `${article(unitWord(u, 1))} ${unitWord(u, 1)} of ${name}`; // "a jar of honey" (0.9.2)
   if (u === 'each') return `${formatNumber(n)} ${name}`;
   return `${formatNumber(n)} ${unitWord(u, n)} of ${name}`;
 }
