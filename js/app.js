@@ -10,7 +10,7 @@ import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
 import {
   routeOf, tabOf, search, createViewStore, relativeTime, placeContents, itemDetail, changeAction, editAction, unitChoices,
-  categoriesOf,
+  categoriesOf, predictView,
 } from './browse.js';
 import { renderPlaces, renderPlace, renderItem, renderSearchResults, renderRecent, openForm } from './screens.js';
 
@@ -168,7 +168,10 @@ function render() {
     ui.banner.hidden = true;
   }
   renderUndo();
-  if (state.mode === 'idle' && reloadWhenIdle) window.location.reload();
+  if (state.mode === 'idle' && reloadWhenIdle) {
+    try { sessionStorage.setItem('wisp.updated', '1'); } catch { /* still reloads */ }
+    window.location.reload(); // a new version: the reload must not open the mic by itself (0.6.3)
+  }
 }
 
 // Undo (ADR-010): one tap = the newest item of *this* list, by txn_id. Busy while it's on its way.
@@ -469,7 +472,7 @@ function renderBrowse() {
   if (route.screen === 'talk') return;
   renderBrowseStatus();
   ui.searchBox.hidden = route.screen !== 'search';
-  const view = viewEntry?.view;
+  const view = pendingView ?? viewEntry?.view;
   const now = new Date();
   let title = TITLES[route.screen] ?? '';
   if (view && route.screen === 'place') title = placeContents(view, route.id)?.place.name ?? 'Place';
@@ -557,11 +560,18 @@ async function adoptView(r) {
 
 // ---------- manual corrections (ADR-011 step B) ----------
 /** Send one change; never queued (a stale tap must not land later). Shows the result with an Undo. */
+let pendingView = null; // what the screen shows while a change is saving (counted items only)
+
 async function runChange(actions) {
   ui.browseBody.classList.add('busy');
+  pendingView = predictView(viewEntry.view, actions[0]);
+  if (pendingView) renderBrowse();
+  toast('Saving…');
   const t0 = performance.now();
   const r = await backend.actions(actions, newId());
   ui.browseBody.classList.remove('busy');
+  pendingView = null;
+  if (r.kind !== 'ok' || r.data.status !== 'ok') renderBrowse(); // back to what's really there
   log(`change ${actions[0].intent} → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms${serverTiming(r)}`);
   if (r.kind === 'ok' && r.data.status === 'ok') {
     toast(r.data.reply, r.data.txn_id);
@@ -677,6 +687,13 @@ if (setupResult === 'stored') {
 } else if (!tokenStore.get()) {
   showSetup();
 } else if (document.visibilityState === 'visible') {
-  wake('launch');
+  let updated = false;
+  try { updated = sessionStorage.getItem('wisp.updated') === '1'; sessionStorage.removeItem('wisp.updated'); } catch { /* ignore */ }
+  if (updated) {
+    log(`updated to ${APP_VERSION}: not opening the mic`);
+    notice(`WISP updated to ${APP_VERSION}.`);
+  } else {
+    wake('launch');
+  }
 }
 render();

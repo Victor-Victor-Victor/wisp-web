@@ -186,7 +186,8 @@ body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .actions .btn { min-width: 56px; font-size: 18px; }
 .actions.end { justify-content: flex-end; margin-top: 18px; }
 .lots li .btn.small { min-height: 44px; }
-.busy { pointer-events: none; opacity: 0.6; }
+.busy { pointer-events: none; }
+.busy .actions .btn { opacity: 0.5; }
 .toast { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 dialog.form {
   width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto;

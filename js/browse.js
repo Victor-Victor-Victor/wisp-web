@@ -233,6 +233,39 @@ export function editAction(kind, current, values) {
   return kind === 'item' ? { intent: 'edit', item_id: current.id, set } : { intent: 'edit', location_id: current.id, set };
 }
 
+const countLabel = (u) => (/(ch|sh|x|s)$/.test(u) ? `${u}es` : /[^aeiou]y$/.test(u) ? `${u.slice(0, -1)}ies` : `${u}s`);
+/** "3 packages", "1 box", "4" (each) — a count as the server would show it. */
+export function countText(n, unit) {
+  const r = Math.round(n * 100) / 100;
+  if (!unit || unit === 'each') return String(r);
+  return `${r} ${r === 1 ? unit : countLabel(unit)}`;
+}
+
+/**
+ * What the screen should show while a counted item's change is saving (0.6.3: the save takes ~3 s, mostly the trip
+ * to Apps Script). Only − / + / Set of counted items are predicted; anything else returns null (just "Saving…").
+ * The server's own view replaces this as soon as it answers.
+ */
+export function predictView(view, action) {
+  const id = action?.item?.matched_item_id;
+  const placeId = action?.location?.matched_location_id;
+  const item = view.items.find((i) => i.id === id);
+  if (!item || item.tracking !== 'count' || !['add', 'remove', 'adjust'].includes(action.intent)) return null;
+  const now = (s) => (s ? parseFloat(s.amount) || 0 : 0);
+  const stock = item.stock.find((s) => s.place_id === placeId);
+  const before = now(stock);
+  const after = action.intent === 'adjust' ? Number(action.quantity)
+    : before + (action.intent === 'add' ? 1 : -1) * Number(action.quantity ?? 1);
+  if (!Number.isFinite(after) || after < 0 || (action.intent === 'remove' && !stock)) return null;
+  const unit = item.unit || 'each';
+  let newStock = item.stock.map((s) => (s.place_id === placeId ? { ...s, amount: countText(after, unit) } : s));
+  if (!stock && after > 0) newStock = [...newStock, { place_id: placeId, amount: countText(after, unit), oldest: new Date().toISOString(), lots: [] }];
+  if (after === 0) newStock = newStock.filter((s) => s.place_id !== placeId);
+  const total = newStock.reduce((sum, s) => sum + now(s), 0);
+  const items = view.items.map((i) => (i.id === id ? { ...i, stock: newStock, total: newStock.length ? countText(total, unit) : '' } : i));
+  return { ...view, items };
+}
+
 /** Categories already in use, for the Edit form's suggestions. */
 export function categoriesOf(view) {
   return [...new Set(view.items.map((i) => i.category).filter(Boolean))].sort();
