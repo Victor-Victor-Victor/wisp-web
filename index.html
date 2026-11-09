@@ -34,6 +34,22 @@
       </label>
       <label class="toggle" id="vibrate-row"><input type="checkbox" id="set-vibrate"> Also vibrate</label>
 
+      <h2>Data</h2>
+      <fieldset class="choices">
+        <legend>Keep the inventory</legend>
+        <label><input type="radio" name="data" value="sheet"> In the Google Sheet (needs the setup code)</label>
+        <label><input type="radio" name="data" value="phone"> On this phone only (works offline, no setup)</label>
+      </fieldset>
+      <div id="phone-data" hidden>
+        <p class="hint" id="phone-data-status"></p>
+        <div class="actions">
+          <button id="backup-save" class="btn" type="button">Save a backup file</button>
+          <button id="backup-restore" class="btn" type="button">Restore from a file…</button>
+          <button id="phone-erase" class="btn" type="button">Erase everything…</button>
+        </div>
+        <input id="backup-file" type="file" accept="application/json,.json" hidden>
+      </div>
+
       <h2>Timing</h2>
       <label class="pick">After a single phrase, wait for more
         <select id="set-grace" aria-describedby="grace-hint"><option value="1.5">1.5 s</option><option value="2">2 s</option><option value="3">3 s</option><option value="4">4 s</option></select>

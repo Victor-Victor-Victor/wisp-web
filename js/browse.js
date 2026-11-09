@@ -217,7 +217,7 @@ export function changeAction(view, kind, { item, placeId, lotId, qty, unit, to }
 /** The Edit form's values → an edit action with only what changed (null when nothing did). */
 export function editAction(kind, current, values) {
   const fields = kind === 'item'
-    ? ['name', 'aliases', 'category', 'subcategory', 'notes', 'needs_amount', 'pkg_amount']
+    ? ['name', 'aliases', 'category', 'subcategory', 'notes', 'needs_amount', 'pkg_amount', 'tracking', 'unit']
     : ['name', 'aliases', 'area', 'type'];
   const now = (f) => (f === 'aliases' ? current.aliases.join(', ') : current[f]);
   const set = {};
@@ -227,7 +227,7 @@ export function editAction(kind, current, values) {
     if (typeof v === 'string') v = v.replace(/\s+/g, ' ').trim();
     if (f === 'aliases') v = v.split(',').map((a) => a.trim()).filter(Boolean).join(', ');
     if (String(v ?? '') === String(now(f) ?? '')) continue;
-    set[f === 'pkg_amount' ? 'default_pkg_amount' : f] = v;
+    set[{ pkg_amount: 'default_pkg_amount', unit: 'default_unit' }[f] ?? f] = v;
   }
   if (!Object.keys(set).length) return null;
   return kind === 'item' ? { intent: 'edit', item_id: current.id, set } : { intent: 'edit', location_id: current.id, set };

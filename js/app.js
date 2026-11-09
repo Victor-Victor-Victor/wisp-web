@@ -6,6 +6,7 @@ import { createVoice } from './voice.js';
 import { createCuePlayer, CUE_GUIDE, describeCue, CLIP_FILES } from './cues.js';
 import { createSettings, timingFor } from './settings.js';
 import { createBackend, FRESH } from './backend.js';
+import { createLocalBackend, idbStore } from './local.js';
 import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
 import {
@@ -24,6 +25,8 @@ const ui = {
   talk: $('talk'), browse: $('browse'), browseTitle: $('browse-title'), browseStatus: $('browse-status'),
   browseBody: $('browse-body'), searchBox: $('search-box'), refresh: $('refresh'), fab: $('fab-mic'), toast: $('toast'),
   tabs: [...document.querySelectorAll('.tabs a')],
+  phoneData: $('phone-data'), phoneDataStatus: $('phone-data-status'), backupSave: $('backup-save'),
+  backupRestore: $('backup-restore'), backupFile: $('backup-file'), phoneErase: $('phone-erase'),
   guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), graceS: $('set-grace'), word: $('set-word'), wordRow: $('word-row'),
 };
 
@@ -39,9 +42,17 @@ function log(msg) {
 const tokenStore = createTokenStore(window.localStorage);
 const setupResult = consumeSetupHash(window.location, window.history, tokenStore);
 const settings = createSettings(window.localStorage);
-const backend = createBackend({
+const sheetBackend = createBackend({
   url: BACKEND_URL, getToken: tokenStore.get, fetchFn: (...a) => fetch(...a), timeoutMs: TIMING.requestTimeoutMs,
 });
+const phoneBackend = createLocalBackend({ store: idbStore(window.indexedDB) });
+/** ⚙ Data (ADR-014): the inventory lives in the Google Sheet or only on this phone. */
+const onPhone = () => settings.get().data === 'phone';
+const active = () => (onPhone() ? phoneBackend : sheetBackend);
+const backend = Object.fromEntries(['command', 'list', 'answer', 'undo', 'actions', 'view', 'check']
+  .map((m) => [m, (...args) => active()[m](...args)]));
+/** Ready to talk: on the phone always; the Sheet needs the setup token. */
+const ready = () => onPhone() || Boolean(tokenStore.get());
 const queue = createQueue(indexedDbStore(window.indexedDB));
 const voice = createVoice({ log, onInterim: (t) => { ui.transcript.textContent = t; } });
 const cues = createCuePlayer({ getSettings: settings.get, log, speak: (t) => voice.speak(t), tailMs: TIMING.echoTailMs, clips: CLIP_FILES });
@@ -282,7 +293,7 @@ function renderAttention(list = loadAttention()) {
 }
 
 async function drainQueue() {
-  if (!tokenStore.get()) return;
+  if (!tokenStore.get() || onPhone()) return; // the queue is for the Sheet only
   const done = await queue.drain((item) => backend.list(item.transcript, item.location, item.id));
   if (!done.length) return;
   log(`retried ${done.length} queued chunk(s)`);
@@ -359,6 +370,7 @@ function renderSettings() {
 ui.gear.addEventListener('click', () => {
   ui.settings.hidden = !ui.settings.hidden;
   renderSettings();
+  renderData();
 });
 for (const input of document.querySelectorAll('input[name="style"]')) {
   input.addEventListener('change', () => {
@@ -370,6 +382,86 @@ for (const input of document.querySelectorAll('input[name="style"]')) {
 for (const [el, key] of [[ui.pauseS, 'pauseS'], [ui.finishS, 'finishS'], [ui.graceS, 'graceS']]) {
   el.addEventListener('change', () => { settings.set({ [key]: Number(el.value) }); renderSettings(); });
 }
+// ---------- ⚙ Data (ADR-014) ----------
+const BACKUP_KEY = 'wisp.lastBackup';
+async function renderData() {
+  const phone = onPhone();
+  for (const input of document.querySelectorAll('input[name="data"]')) input.checked = input.value === settings.get().data;
+  ui.phoneData.hidden = !phone;
+  if (!phone) return;
+  const c = await phoneBackend.counts();
+  let last = null;
+  try { last = localStorage.getItem(BACKUP_KEY); } catch { /* ignore */ }
+  const days = last ? (Date.now() - new Date(last).getTime()) / 86400000 : Infinity;
+  ui.phoneDataStatus.textContent = `${c.items} item${c.items === 1 ? '' : 's'} in ${c.places} place${c.places === 1 ? '' : 's'} on this phone. `
+    + (last ? `Last backup file: ${relativeTime(last)}.` : 'No backup file saved yet.')
+    + (c.changes && days > 7 ? ' Save one now — it only lives on this phone.' : '');
+}
+for (const input of document.querySelectorAll('input[name="data"]')) {
+  input.addEventListener('change', async () => {
+    settings.set({ data: input.value });
+    viewEntry = null; // the two inventories are different
+    try { localStorage.removeItem('wisp.view'); } catch { /* ignore */ }
+    viewStale = true;
+    log(`data → ${input.value}`);
+    ui.setup.hidden = true;
+    if (!ready()) showSetup();
+    notice(input.value === 'phone' ? 'WISP now keeps the inventory on this phone. The Google Sheet is left as it was.' : 'WISP now uses the Google Sheet again. The phone\'s inventory is kept for when you switch back.');
+    await renderData();
+  });
+}
+ui.backupSave.addEventListener('click', async () => {
+  const text = await phoneBackend.exportData();
+  const name = `wisp-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const file = new File([text], name, { type: 'application/json' });
+  const download = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  };
+  let saved = true;
+  try {
+    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: name }); // Drive, email…
+    else download();
+  } catch (e) {
+    if (e?.name === 'AbortError') saved = false; // the person closed the share sheet
+    else download(); // sharing refused: save it to Downloads instead
+  }
+  if (saved) {
+    try { localStorage.setItem(BACKUP_KEY, new Date().toISOString()); } catch { /* ignore */ }
+    notice(`Backup saved: ${name}.`);
+  }
+  renderData();
+});
+ui.backupRestore.addEventListener('click', () => ui.backupFile.click());
+ui.backupFile.addEventListener('change', async () => {
+  const f = ui.backupFile.files?.[0];
+  ui.backupFile.value = '';
+  if (!f) return;
+  if (!window.confirm(`Restore "${f.name}"? This replaces everything on this phone.`)) return;
+  try {
+    const r = await phoneBackend.importData(await f.text());
+    notice(`Restored ${r.items} item${r.items === 1 ? '' : 's'} in ${r.places} place${r.places === 1 ? '' : 's'}.`);
+    viewStale = true;
+  } catch (e) {
+    notice(e.message);
+  }
+  renderData();
+});
+ui.phoneErase.addEventListener('click', async () => {
+  const typed = window.prompt('This deletes the whole inventory on this phone (the Google Sheet is not touched). Type ERASE to confirm.');
+  if (String(typed ?? '').trim() !== 'ERASE') {
+    notice('Nothing was erased.');
+    return;
+  }
+  await phoneBackend.erase();
+  viewStale = true;
+  notice('Everything on this phone was erased.');
+  renderData();
+});
+
 ui.word.addEventListener('change', () => {
   settings.set({ word: ui.word.value });
   renderSettings();
@@ -383,7 +475,7 @@ ui.vibrate.addEventListener('change', () => {
 
 // ---------- events ----------
 ui.mic.addEventListener('click', () => {
-  if (!tokenStore.get()) {
+  if (!ready()) {
     showSetup();
     return;
   }
@@ -394,7 +486,7 @@ ui.undo.addEventListener('click', () => dispatch({ type: 'undo', requestId: newI
 function wake(reason) {
   log(`wake: ${reason}`);
   drainQueue();
-  if (tokenStore.get() && route.screen === 'talk') dispatch({ type: 'start' }); // browsing: don't open the mic
+  if (ready() && route.screen === 'talk') dispatch({ type: 'start' }); // browsing: don't open the mic
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -407,7 +499,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | wait ${s.graceS} s, pause ${s.pauseS} s, finish ${s.finishS} s`,
+    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | data: ${s.data} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | wait ${s.graceS} s, pause ${s.pauseS} s, finish ${s.finishS} s`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {
@@ -440,7 +532,7 @@ const TITLES = { places: 'Places', search: 'Search', recent: 'Recent changes' };
 const STALE_MS = 30000;
 
 async function refreshView({ force = false } = {}) {
-  if (!tokenStore.get() || refreshing) return;
+  if (!ready() || refreshing) return;
   const age = viewEntry ? Date.now() - new Date(viewEntry.fetched_at).getTime() : Infinity;
   if (!force && !viewStale && age < STALE_MS) return;
   refreshing = true;
@@ -698,6 +790,11 @@ const act = {
           { name: 'needs_amount', label: 'Always ask how much', type: 'checkbox', value: target.needs_amount },
           { name: 'pkg_amount', label: `Usual package size (${target.unit})`, type: 'number', value: target.pkg_amount === '' || target.pkg_amount == null ? '' : String(target.pkg_amount) },
         ] : []),
+        // how it's measured: only while none is on hand (the engine enforces it too) — ADR-014
+        ...(target.stock.length ? [] : [
+          { name: 'tracking', label: 'How it\'s kept', type: 'select', value: target.tracking, options: [{ value: 'count', label: 'Counted (packages, boxes…)' }, { value: 'measure', label: 'Weighed or measured (lb, oz, gal…)' }] },
+          { name: 'unit', label: 'Unit', type: 'text', value: target.unit, hint: 'Counted: package, box, bag, can… Weighed: lb, oz, kg, gal, qt…' },
+        ]),
         { name: 'notes', label: 'Notes', type: 'textarea', value: target.notes }]
       : [...common,
         { name: 'area', label: 'Area', type: 'text', value: target.area, hint: 'e.g. Garage, Kitchen', list: [...new Set(view.places.map((p) => p.area).filter(Boolean))] },
@@ -737,7 +834,7 @@ if (setupResult === 'stored') {
   confirmSetup();
 } else if (setupResult === 'invalid') {
   showSetup("That setup link wasn't valid. Scan the code again.");
-} else if (!tokenStore.get()) {
+} else if (!ready()) {
   showSetup();
 } else if (document.visibilityState === 'visible') {
   let updated = false;

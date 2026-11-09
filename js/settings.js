@@ -6,9 +6,10 @@ const KEY = 'wisp.settings';
 export const CUE_STYLES = ['voice', 'tones', 'beeps', 'vibrate', 'silent'];
 export const PAUSE_CHOICES = [10, 15, 20, 30]; // seconds
 export const FINISH_CHOICES = [15, 30, 60]; // seconds
+export const DATA_CHOICES = ['sheet', 'phone']; // ADR-014: where the inventory lives
 export const GRACE_CHOICES = [1.5, 2, 3, 4]; // seconds WISP keeps listening after a phrase with no "and" (0.6.7)
 export const WORD_CHOICES = ['okay', 'kay']; // the Voice style's word: "Okay." or a quicker one-syllable "Kay."
-export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30, word: 'okay', graceS: 3 });
+export const DEFAULTS = Object.freeze({ style: 'voice', vibrate: false, pauseS: 15, finishS: 30, word: 'okay', graceS: 3, data: 'sheet' });
 const FROM_OLD_SOUNDS = { full: 'voice', minimal: 'beeps', off: 'silent' }; // 0.4.x settings
 
 function clean(raw) {
@@ -23,6 +24,7 @@ function clean(raw) {
     finishS: pick(s.finishS, FINISH_CHOICES, DEFAULTS.finishS),
     word: WORD_CHOICES.includes(s.word) ? s.word : DEFAULTS.word,
     graceS: pick(s.graceS, GRACE_CHOICES, DEFAULTS.graceS),
+    data: DATA_CHOICES.includes(s.data) ? s.data : DEFAULTS.data,
   };
 }
 

@@ -1,5 +1,5 @@
 // WISP service worker. Bump CACHE_VERSION on every web deploy.
-const CACHE_VERSION = 'wisp-v19';
+const CACHE_VERSION = 'wisp-v20';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,16 @@ const SHELL = [
   './js/setup.js',
   './js/utterance.js',
   './js/browse.js',
+  './js/local.js',
+  './js/core/engine.js',
+  './js/core/units.js',
+  './js/core/match.js',
+  './js/core/reply.js',
+  './js/core/list.js',
+  './js/core/rules.js',
+  './js/core/view.js',
+  './js/core/state.js',
+  './js/core/answer.js',
   './js/screens.js',
   './audio/okay.wav',
   './audio/kay.wav',
