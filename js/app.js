@@ -24,7 +24,7 @@ const ui = {
   talk: $('talk'), browse: $('browse'), browseTitle: $('browse-title'), browseStatus: $('browse-status'),
   browseBody: $('browse-body'), searchBox: $('search-box'), refresh: $('refresh'), fab: $('fab-mic'), toast: $('toast'),
   tabs: [...document.querySelectorAll('.tabs a')],
-  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), word: $('set-word'), wordRow: $('word-row'),
+  guide: $('guide'), vibrateRow: $('vibrate-row'), pauseS: $('set-pause'), finishS: $('set-finish'), graceS: $('set-grace'), word: $('set-word'), wordRow: $('word-row'),
 };
 
 // ---------- diagnostics log (never contains the token) ----------
@@ -338,6 +338,7 @@ function renderSettings() {
   ui.vibrateRow.hidden = s.style === 'vibrate' || s.style === 'silent';
   ui.word.value = s.word;
   ui.wordRow.hidden = s.style !== 'voice';
+  ui.graceS.value = String(s.graceS);
   ui.pauseS.value = String(s.pauseS);
   ui.finishS.value = String(s.finishS);
   ui.guide.replaceChildren(...CUE_GUIDE.map((g) => {
@@ -366,7 +367,7 @@ for (const input of document.querySelectorAll('input[name="style"]')) {
     cues.play('heard'); // preview
   });
 }
-for (const [el, key] of [[ui.pauseS, 'pauseS'], [ui.finishS, 'finishS']]) {
+for (const [el, key] of [[ui.pauseS, 'pauseS'], [ui.finishS, 'finishS'], [ui.graceS, 'graceS']]) {
   el.addEventListener('change', () => { settings.set({ [key]: Number(el.value) }); renderSettings(); });
 }
 ui.word.addEventListener('change', () => {
@@ -406,7 +407,7 @@ ui.copy.addEventListener('click', async () => {
   const s = settings.get();
   const report = [
     `WISP ${APP_VERSION} — ${new Date().toString()}`,
-    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | pause ${s.pauseS} s, finish ${s.finishS} s`,
+    `display: ${matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'} | set up: ${tokenStore.get() ? 'yes' : 'no'} | queued: ${await queue.size()} | cues: ${s.style}${s.style === 'voice' ? ` (${s.word})` : ''}${s.vibrate ? ' + vibrate' : ''} | wait ${s.graceS} s, pause ${s.pauseS} s, finish ${s.finishS} s`,
     `UA: ${navigator.userAgent}`, '', ...logLines,
   ].join('\n');
   try {

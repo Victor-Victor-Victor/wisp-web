@@ -103,10 +103,11 @@ export function readBack(saved) {
   if (onePlace) {
     const whats = adds.map((p) => p.what);
     const shown = more ? [...whats.slice(0, READ_BACK_MAX - 1), `${more} more — on screen`] : whats;
-    return `Okay, I have ${joinList(shown)} in the ${adds[0].place}.`;
+    // no "Okay," here: the per-phrase "Okay" already said it, and two so close together clash (0.6.7)
+    return `I have ${joinList(shown)} in the ${adds[0].place}.`;
   }
   const shown = more ? [...summaries.slice(0, READ_BACK_MAX - 1), `${more} more — on screen`] : summaries;
-  return `Okay: ${joinList(shown)}.`;
+  return `${capitalize(joinList(shown))}.`;
 }
 
 /** One spoken wrap-up for the whole session. */
