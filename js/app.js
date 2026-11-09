@@ -79,9 +79,11 @@ const backend = Object.fromEntries(['command', 'list', 'answer', 'undo', 'action
 const ready = () => onPhone() || Boolean(tokenStore.get());
 const queue = createQueue(indexedDbStore(window.indexedDB));
 const onInterim = (t) => { ui.transcript.textContent = t; };
+const nativePlugin = (name) => CAP?.Plugins?.[name] ?? CAP?.registerPlugin?.(name);
 const voice = NATIVE
   ? createNativeVoice({
-    plugins: { SpeechRecognition: CAP.registerPlugin('SpeechRecognition'), TextToSpeech: CAP.registerPlugin('TextToSpeech') },
+    // no bundler: the native bridge exposes each plugin as Capacitor.Plugins.<name>
+    plugins: { SpeechRecognition: nativePlugin('SpeechRecognition'), TextToSpeech: nativePlugin('TextToSpeech') },
     log, onInterim,
   })
   : createVoice({ log, onInterim });
