@@ -266,6 +266,26 @@ export function predictView(view, action) {
   return { ...view, items };
 }
 
+/** The screen with quick − / + taps not saved yet (or still saving) applied: [{itemId, placeId, delta}]. */
+export function applyTapDeltas(view, deltas) {
+  let v = view;
+  for (const d of deltas) {
+    if (!d.delta) continue;
+    const action = {
+      intent: d.delta > 0 ? 'add' : 'remove', item: { matched_item_id: d.itemId },
+      location: { matched_location_id: d.placeId }, quantity: Math.abs(d.delta),
+    };
+    v = predictView(v, action) ?? v;
+  }
+  return v;
+}
+
+/** How many of a counted item a place shows (0 if none). */
+export function countAt(view, itemId, placeId) {
+  const s = view?.items.find((i) => i.id === itemId)?.stock.find((x) => x.place_id === placeId);
+  return s ? parseFloat(s.amount) || 0 : 0;
+}
+
 /** Categories already in use, for the Edit form's suggestions. */
 export function categoriesOf(view) {
   return [...new Set(view.items.map((i) => i.category).filter(Boolean))].sort();

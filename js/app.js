@@ -10,7 +10,7 @@ import { createQueue, indexedDbStore, describeDrained } from './queue.js';
 import { consumeSetupHash, createTokenStore, isPlausibleToken } from './setup.js';
 import {
   routeOf, tabOf, search, createViewStore, relativeTime, placeContents, itemDetail, changeAction, editAction, unitChoices,
-  categoriesOf, predictView,
+  categoriesOf, predictView, applyTapDeltas, countAt,
 } from './browse.js';
 import { renderPlaces, renderPlace, renderItem, renderSearchResults, renderRecent, openForm } from './screens.js';
 
@@ -102,7 +102,7 @@ async function run(fx) {
       const req = fx.request;
       const t0 = performance.now();
       const result = await send(req);
-      log(`${req.kind} → ${result.kind}${result.data?.status ? `/${result.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms`);
+      log(`${req.kind} → ${result.kind}${result.data?.status ? `/${result.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms${serverTiming(result)}`);
       if (result.kind === 'network' && req.kind === 'list') {
         await queue.enqueue({ transcript: req.transcript, requestId: req.requestId, location: req.location });
         log('queued for retry');
@@ -472,7 +472,7 @@ function renderBrowse() {
   if (route.screen === 'talk') return;
   renderBrowseStatus();
   ui.searchBox.hidden = route.screen !== 'search';
-  const view = pendingView ?? viewEntry?.view;
+  const view = shownView();
   const now = new Date();
   let title = TITLES[route.screen] ?? '';
   if (view && route.screen === 'place') title = placeContents(view, route.id)?.place.name ?? 'Place';
@@ -541,7 +541,7 @@ async function undoFromRecent(txnId, button) {
 function serverTiming(r) {
   const t = r.data?.timing;
   if (!t) return '';
-  const parts = ['load', 'engine', 'write'].filter((k) => t[k] != null).map((k) => `${k} ${Math.round(t[k])}`);
+  const parts = ['load', 'llm', 'engine', 'write'].filter((k) => t[k] != null).map((k) => `${k} ${Math.round(t[k])}`);
   return ` (server ${Math.round(t.total ?? 0)}: ${parts.join(', ')}${t.cache ? `, cache ${t.cache}` : ''})`;
 }
 
@@ -589,11 +589,63 @@ async function runChange(actions) {
 const unitOptions = (item) => unitChoices(item).map((u) => ({ value: u, label: u }));
 const placeName = (id) => viewEntry?.view.places.find((p) => p.id === id)?.name ?? 'there';
 
+// ---------- quick − / + taps (0.6.4): count up on screen at once, save together after a pause ----------
+const TAP_SETTLE_MS = 900;
+const taps = new Map(); // `${itemId}|${placeId}` → {itemId, item, placeId, delta, timer}: not sent yet
+const sentTaps = []; // [{itemId, placeId, delta}] sent, not answered yet
+
+/** The view as the screen should show it: a predicted Set…, plus taps not yet saved. */
+function shownView() {
+  const base = pendingView ?? viewEntry?.view;
+  const deltas = [...sentTaps, ...taps.values()];
+  return base && deltas.length ? applyTapDeltas(base, deltas) : base;
+}
+
+function tap(item, placeId, step) {
+  if (step < 0 && countAt(shownView(), item.id, placeId) <= 0) return; // nothing left to take out
+  const key = `${item.id}|${placeId}`;
+  const t = taps.get(key) ?? { itemId: item.id, item, placeId, delta: 0, timer: null };
+  t.delta += step;
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => saveTaps(key), TAP_SETTLE_MS);
+  taps.set(key, t);
+  renderBrowse();
+}
+
+async function saveTaps(key) {
+  const t = taps.get(key);
+  taps.delete(key);
+  if (!t?.delta || !viewEntry) {
+    renderBrowse();
+    return;
+  }
+  const sent = { itemId: t.itemId, placeId: t.placeId, delta: t.delta };
+  sentTaps.push(sent);
+  const action = { ...changeAction(viewEntry.view, t.delta > 0 ? 'plusOne' : 'minusOne', { item: t.item, placeId: t.placeId }), quantity: Math.abs(t.delta) };
+  toast('Saving…');
+  const t0 = performance.now();
+  const r = await backend.actions([action], newId());
+  sentTaps.splice(sentTaps.indexOf(sent), 1);
+  log(`taps ${t.delta > 0 ? '+' : ''}${t.delta} → ${r.kind}${r.data?.status ? `/${r.data.status}` : ''} in ${Math.round(performance.now() - t0)} ms${serverTiming(r)}`);
+  if (r.kind === 'ok' && r.data.status === 'ok') {
+    toast(r.data.reply, r.data.txn_id);
+    await adoptView(r);
+  } else {
+    if (r.kind === 'ok' && r.data.status === 'clarify') toast(`Nothing was changed. ${r.data.reply}`);
+    else toast(r.kind === 'network' ? "I couldn't reach the inventory. Nothing was changed." : (r.data?.reply || 'Something went wrong. Nothing was changed.'));
+    renderBrowse(); // back to what's really there
+  }
+}
+
 const act = {
   async change(kind, args) {
     const view = viewEntry?.view;
     if (!view) return;
     const { item, placeId } = args;
+    if (kind === 'plusOne' || kind === 'minusOne') {
+      tap(item, placeId, kind === 'plusOne' ? 1 : -1);
+      return;
+    }
     const what = item.name.toLowerCase();
     let values = {};
     if (kind === 'set') {
